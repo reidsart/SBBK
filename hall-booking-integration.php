@@ -513,18 +513,26 @@ class HallBookingIntegration {
     // Admin notification
     //////////////////////
 
-    private function send_admin_notification($event_id, $contact_person, $space, $event_date, $public_title, $invoice_id) {
-        $admin_email = get_option('admin_email');
-        $edit_url = admin_url("post.php?post={$event_id}&action=edit");
-        $invoice_url = admin_url("post.php?post={$invoice_id}&action=edit");
-        $subject = "🏢 New Hall Booking: {$contact_person} - {$space}";
-        $message = "A new booking request has been received and automatically created as a pending event.\n\n";
-        $message .= "📋 BOOKING DETAILS:\nContact: {$contact_person}\nSpace: {$space}\nDate: {$event_date}\nEvent: {$public_title}\n\n";
-        $message .= "Invoice: {$invoice_url}\n";
-        $message .= "⚡ QUICK APPROVAL:\n1. Verify payment\n2. Click here to approve: {$edit_url}\n3. Use the 'Quick Approve' button\n4. Set visibility\n\n";
-        $message .= "The event will automatically appear on your public calendar once approved.";
-        wp_mail($admin_email, $subject, $message);
+private function send_admin_notification($event_id, $contact_person, $space, $event_date, $public_title, $invoice_id) {
+    $admin_email = get_option('admin_email');
+    if (empty($admin_email)) {
+        error_log("HallBookingIntegration: admin_email option not set.");
+        return;
     }
+    if (empty($event_id) || empty($invoice_id)) {
+        error_log("HallBookingIntegration: Missing event_id or invoice_id for admin notification.");
+        return;
+    }
+    $edit_url = admin_url("post.php?post={$event_id}&action=edit");
+    $invoice_url = admin_url("post.php?post={$invoice_id}&action=edit");
+    $subject = "🏢 New Hall Booking: {$contact_person} - {$space}";
+    $message = "A new booking request has been received and automatically created as a pending event.\n\n";
+    $message .= "📋 BOOKING DETAILS:\nContact: {$contact_person}\nSpace: {$space}\nDate: {$event_date}\nEvent: {$public_title}\n\n";
+    $message .= "Invoice: {$invoice_url}\n";
+    $message .= "⚡ QUICK APPROVAL:\n1. Verify payment\n2. Click here to approve: {$edit_url}\n3. Use the 'Quick Approve' button\n4. Set visibility\n\n";
+    $message .= "The event will automatically appear on your public calendar once approved.";
+    wp_mail($admin_email, $subject, $message);
+}
 }
 
 // Initialize plugin
