@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Hall Booking Integration
  * Description: Automates Sandbaai Hall bookings via Contact Form 7 and Events Manager, with invoice generation and tariff management.
- * Version: 2.0
+ * Version: 2.1
  * Author: Christopher Reid, Copilot
  */
 
@@ -19,7 +19,7 @@ class HallBookingIntegration {
     }
 
     /**
-     * Handle Contact Form 7 booking submission: create event + invoice, notify admin, redirect user.
+     * Handle Contact Form 7 booking submission: create event + invoice, notify admin.
      */
     public function handle_booking_submission($contact_form) {
         $booking_form_id = get_option('hall_booking_form_id', 0);
@@ -79,7 +79,7 @@ class HallBookingIntegration {
             'post_title'     => $pending_title,
             'post_content'   => $public_description,
             'post_excerpt'   => $public_description,
-            'post_status'    => 'pending',
+            'post_status'    => 'draft', // FIXED: was 'pending'
             'post_type'      => 'event',
             'post_author'    => 1,
             'comment_status' => 'closed'
@@ -100,9 +100,12 @@ class HallBookingIntegration {
                 $em_event = new EM_Event($event_id);
                 if ($location_id && get_post_status($location_id) == 'publish') {
                     $em_event->location_id = $location_id;
+                    $em_event->location = EM_Location::find($location_id);
                     $em_event->save();
                 }
             }
+            // (Optional, for compatibility)
+            update_post_meta($event_id, 'location_id', $location_id);
 
             // Booking meta
             update_post_meta($event_id, '_booking_contact_person', $contact_person);
@@ -122,6 +125,7 @@ class HallBookingIntegration {
             // Notify booking admin
             $this->send_admin_notification($event_id, $contact_person, $space, $event_date, $public_title, $invoice_id);
 
+            // DO NOT use wp_redirect here; let CF7 handle AJAX
         }
     }
 
@@ -219,7 +223,7 @@ class HallBookingIntegration {
         $invoice_id = wp_insert_post([
             'post_title'   => $title,
             'post_type'    => 'hall_invoice',
-            'post_status'  => 'draft',
+            'post_status'  => 'draft', // FIXED: was 'pending'
             'post_content' => "Booking for {$space} ({$event_time}) on {$event_date}. Guests: {$guest_count}.",
             'post_author'  => 1,
         ]);
@@ -257,14 +261,120 @@ class HallBookingIntegration {
     }
 
     public function admin_page() {
-        // ... Same as original, omitted for brevity. Shows form for mapping booking form and locations.
-        // Add note: Tariff management moved to separate page "Tariffs".
+        if (isset($_POST['submit'])) {
+            update_option('hall_booking_form_id', sanitize_text_field($_POST['form_id']));
+            update_option('hall_booking_main_hall_location', intval($_POST['main_hall_location']));
+            update_option('hall_booking_meeting_room_location', intval($_POST['meeting_room_location']));
+            echo '<div class="notice notice-success"><p>Settings saved!</p></div>';
+        }
+        if (isset($_POST['delete_booking_id'])) {
+            $booking_id = intval($_POST['delete_booking_id']);
+            if (current_user_can('delete_post', $booking_id)) {
+                wp_trash_post($booking_id);
+                echo '<div class="notice notice-success"><p>Booking deleted!</p></div>';
+            } else {
+                echo '<div class="notice notice-error"><p>Failed to delete booking. Permission denied.</p></div>';
+            }
+        }
+
+        $form_id = get_option('hall_booking_form_id', 0);
+        $main_hall_location = get_option('hall_booking_main_hall_location', 0);
+        $meeting_room_location = get_option('hall_booking_meeting_room_location', 0);
+        $cf7_forms = get_posts(['post_type' => 'wpcf7_contact_form', 'posts_per_page' => -1]);
+        $locations = get_posts(['post_type' => 'location', 'posts_per_page' => -1]);
         ?>
         <div class="wrap">
             <h1>Hall Booking Integration Settings</h1>
-            <!-- Settings form here (as per original code) -->
-            <p>Manage tariffs on the <a href="<?php echo admin_url('edit.php?post_type=event&page=hall-tariffs'); ?>">Tariffs page</a>.</p>
-            <!-- Recent Bookings table here -->
+            <form method="post">
+                <table class="form-table">
+                    <tr>
+                        <th scope="row">Booking Form</th>
+                        <td>
+                            <select name="form_id">
+                                <option value="0">Select your booking form...</option>
+                                <?php foreach ($cf7_forms as $form): ?>
+                                    <option value="<?php echo esc_attr($form->ID); ?>"<?php if ($form_id == $form->ID) echo ' selected="selected"'; ?>>
+                                        <?php echo esc_html($form->post_title); ?>
+                                    </option>
+                                <?php endforeach; ?>
+                            </select>
+                            <p class="description">Choose the Contact Form 7 form that should create events</p>
+                        </td>
+                    </tr>
+                    <tr>
+                        <th scope="row">Main Hall Location</th>
+                        <td>
+                            <select name="main_hall_location">
+                                <option value="0">Select location...</option>
+                                <?php foreach ($locations as $location): ?>
+                                    <option value="<?php echo esc_attr($location->ID); ?>"<?php if ($main_hall_location == $location->ID) echo ' selected="selected"'; ?>>
+                                        <?php echo esc_html($location->post_title); ?>
+                                    </option>
+                                <?php endforeach; ?>
+                            </select>
+                        </td>
+                    </tr>
+                    <tr>
+                        <th scope="row">Meeting Room Location</th>
+                        <td>
+                            <select name="meeting_room_location">
+                                <option value="0">Select location...</option>
+                                <?php foreach ($locations as $location): ?>
+                                    <option value="<?php echo esc_attr($location->ID); ?>"<?php if ($meeting_room_location == $location->ID) echo ' selected="selected"'; ?>>
+                                        <?php echo esc_html($location->post_title); ?>
+                                    </option>
+                                <?php endforeach; ?>
+                            </select>
+                        </td>
+                    </tr>
+                </table>
+                <?php submit_button(); ?>
+            </form>
+
+            <h2>Instructions</h2>
+            <ol>
+                <li>Select your booking form above</li>
+                <li>Make sure your form field names match: contact-person, your-email, phone, space, event-date, event-time, event-title, event-privacy, etc.</li>
+                <li>Create locations for your Main Hall and Meeting Room in Events Manager</li>
+                <li>Select those locations above</li>
+                <li>Test by submitting your booking form</li>
+            </ol>
+
+            <h3>Recent Bookings</h3>
+            <?php
+            $recent_bookings = get_posts([
+                'post_type' => 'event',
+                'meta_key' => '_booking_status',
+                'posts_per_page' => 10,
+                'post_status' => ['draft', 'pending', 'publish'] // FIXED: includes draft
+            ]);
+
+            if ($recent_bookings) {
+                echo '<table class="wp-list-table widefat fixed striped">';
+                echo '<thead><tr><th>Event</th><th>Contact</th><th>Date</th><th>Status</th><th>Action</th></tr></thead><tbody>';
+                foreach ($recent_bookings as $booking) {
+                    $contact = get_post_meta($booking->ID, '_booking_contact_person', true);
+                    $date = get_post_meta($booking->ID, '_event_start_date', true);
+                    $edit_link = admin_url("post.php?post={$booking->ID}&action=edit");
+                    echo '<tr>';
+                    echo '<td>' . esc_html($booking->post_title) . '</td>';
+                    echo '<td>' . esc_html($contact) . '</td>';
+                    echo '<td>' . esc_html($date) . '</td>';
+                    echo '<td>' . ($booking->post_status === 'draft' ? 'Pending' : ($booking->post_status === 'publish' ? 'Approved' : ucfirst($booking->post_status))) . '</td>';
+                    echo '<td>
+                        <a href="' . esc_url($edit_link) . '">Edit</a>
+                        | <form method="post" style="display:inline;" onsubmit="return confirm(\'Are you sure you want to delete this booking?\');">
+                            <input type="hidden" name="delete_booking_id" value="' . esc_attr($booking->ID) . '"/>
+                            <input type="submit" value="Delete" class="button-link-delete"/>
+                        </form>
+                    </td>';
+                    echo '</tr>';
+                }
+                echo '</tbody></table>';
+            } else {
+                echo '<p>No bookings found.</p>';
+            }
+            ?>
         </div>
         <?php
     }
