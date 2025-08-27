@@ -420,9 +420,9 @@ class HallBookingIntegration {
             // Clean up title and description
             $public_description = get_post_meta($post_id, '_booking_event_description', true);
             if (!$public_description) $public_description = $post->post_excerpt ?: 'Private event at Sandbaai Hall';
-            $is_private = get_post_meta($post_id, '_booking_is_private', true);
-            $public_title = $is_private ? 'Private Event' : (get_post_meta($post_id, '_booking_event_title', true) ?: $post->post_title);
-            wp_update_post(['ID' => $post_id, 'post_title' => $public_title, 'post_content' => $public_description]);
+            // Always use the original event title, even if private
+            $original_title = get_post_meta($post_id, '_booking_event_title', true) ?: $post->post_title;
+            wp_update_post(['ID' => $post_id, 'post_title' => $original_title, 'post_content' => $public_description]);
         }
     }
 
