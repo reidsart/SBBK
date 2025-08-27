@@ -18,8 +18,8 @@ class HallBookingIntegration {
         add_action('init', array($this, 'register_invoice_post_type'));
         add_action('admin_post_hall_save_tariffs', array($this, 'save_tariffs'));
         add_action('init', array($this, 'register_quote_post_type'));
-        add_action('add_meta_boxes', array($this, 'add_quote_metabox')); // For quote admin
-        add_action('admin_init', array($this, 'maybe_send_invoice')); // For sending invoice
+        add_action('add_meta_boxes', array($this, 'add_quote_metabox'));
+        add_action('admin_init', array($this, 'maybe_send_invoice'));
         add_shortcode('sandbaai_hall_tariffs', array($this, 'display_tariffs_shortcode'));
         add_shortcode('sandbaai_hall_quote_form', array($this, 'quote_form_shortcode'));
         $this->setup_ajax();
@@ -92,7 +92,7 @@ class HallBookingIntegration {
             'post_title'     => $pending_title,
             'post_content'   => $public_description,
             'post_excerpt'   => $public_description,
-            'post_status'    => 'draft', // FIXED: was 'pending'
+            'post_status'    => 'draft',
             'post_type'      => 'event',
             'post_author'    => 1,
             'comment_status' => 'closed'
@@ -137,22 +137,18 @@ class HallBookingIntegration {
 
             // Notify booking admin
             $this->send_admin_notification($event_id, $contact_person, $space, $event_date, $event_title, $invoice_id);
-
-            // DO NOT use wp_redirect here; let CF7 handle AJAX
         }
     }
-    
+
     /////////////////////
     // QUOTE SYSTEM
     /////////////////////
 
-    // 1. Setup AJAX for saving quote
     public function setup_ajax() {
         add_action('wp_ajax_sandbaai_save_quote', array($this, 'ajax_save_quote'));
         add_action('wp_ajax_nopriv_sandbaai_save_quote', array($this, 'ajax_save_quote'));
     }
 
-    // 2. AJAX handler to save quote as custom post type
     public function ajax_save_quote() {
         if (empty($_POST['selected']) || empty($_POST['quantity']) || empty($_POST['user_email'])) {
             wp_send_json_error('Missing data');
@@ -198,19 +194,17 @@ class HallBookingIntegration {
         }
     }
 
-    // 3. Register custom post type for quotes
     public function register_quote_post_type() {
         register_post_type('hall_quote', [
             'label' => 'Hall Quotes',
             'public' => false,
             'show_ui' => true,
-            'show_in_menu' => 'edit.php?post_type=event', // Show under Events Manager
+            'show_in_menu' => 'edit.php?post_type=event',
             'supports' => ['title'],
             'menu_icon' => 'dashicons-media-text',
         ]);
     }
 
-    // 4. Add meta box to quote edit screen for admin review & send
     public function add_quote_metabox() {
         add_meta_box(
             'hall_quote_metabox',
@@ -222,7 +216,6 @@ class HallBookingIntegration {
         );
     }
 
-    // 5. Meta box content (quote table and send button)
     public function quote_metabox_content($post) {
         $items = get_post_meta($post->ID, 'quote_items', true);
         $total = get_post_meta($post->ID, 'quote_total', true);
@@ -246,7 +239,6 @@ class HallBookingIntegration {
         echo "</tbody></table>";
         echo "<h4>Total: R " . number_format((float)$total, 2) . "</h4>";
 
-        // Send invoice button
         if ($sent) {
             echo "<p style='color:green;font-weight:bold;'>✅ Invoice sent to user.</p>";
         } else {
@@ -255,7 +247,6 @@ class HallBookingIntegration {
         }
     }
 
-    // 6. Handle invoice sending and marking as sent
     public function maybe_send_invoice() {
         if (is_admin() && isset($_POST['send_invoice_quote_id'])) {
             $quote_id = intval($_POST['send_invoice_quote_id']);
@@ -263,7 +254,6 @@ class HallBookingIntegration {
             $items = get_post_meta($quote_id, 'quote_items', true);
             $total = get_post_meta($quote_id, 'quote_total', true);
 
-            // Build email
             $subject = "Sandbaai Hall Invoice/Quote";
             $message = "Thank you for your booking enquiry. Here is your quote:\n\n";
             foreach ($items as $item) {
@@ -273,13 +263,10 @@ class HallBookingIntegration {
             $message .= "\nTotal: R " . number_format((float)$total, 2) . "\n";
             $message .= "\nPlease reply to confirm your booking or if you have any questions.";
 
-            // Send email
             wp_mail($user_email, $subject, $message);
 
-            // Mark sent
             update_post_meta($quote_id, 'invoice_sent', 1);
 
-            // Redirect to prevent resubmission
             wp_redirect(admin_url('post.php?post=' . $quote_id . '&action=edit'));
             exit;
         }
@@ -334,7 +321,6 @@ class HallBookingIntegration {
         </form>
         <div id="quote-response"></div>
         <script>
-        // Simple live total calculation and quantity enable/disable
         document.querySelectorAll('.quote-item').forEach(function(item){
             item.addEventListener('change', function(){
                 var qtyInput = this.closest('tr').querySelector('input[type=number]');
@@ -357,7 +343,6 @@ class HallBookingIntegration {
             document.getElementById('quote-total').textContent = 'R ' + total.toFixed(2);
         }
         calculateTotal();
-        // Submit via AJAX
         document.getElementById('sandbaai-quote-form').addEventListener('submit', function(e){
             e.preventDefault();
             var formData = new FormData(this);
@@ -379,7 +364,7 @@ class HallBookingIntegration {
         <?php
         return ob_get_clean();
     }
-    
+
     //////////////////////////
     // Helper and workflow functions
     //////////////////////////
@@ -411,7 +396,6 @@ class HallBookingIntegration {
         return $content;
     }
 
-    // Modified: now supports custom start/end time (HH:MM)
     private function parse_event_times($event_time, $custom_start = '', $custom_end = '') {
         $times = [
             'Full Day (8am-12:00am)' => ['start' => '08:00:00', 'end' => '24:00:00'],
@@ -420,9 +404,8 @@ class HallBookingIntegration {
             'Evening (6pm-12am)'     => ['start' => '18:00:00', 'end' => '24:00:00']
         ];
         if ($event_time === 'Custom Hours (specify below)' && !empty($custom_start) && !empty($custom_end)) {
-            // Expect custom_start and custom_end as HH:MM
             return [
-                'start' => $custom_start . ':00', // add seconds
+                'start' => $custom_start . ':00',
                 'end'   => $custom_end . ':00'
             ];
         }
@@ -471,7 +454,6 @@ class HallBookingIntegration {
      * Create invoice linked to booking event
      */
     public function create_invoice_for_booking($event_id, $contact_person, $email, $space, $event_date, $event_time, $guest_count) {
-        // Load tariffs from options
         $tariffs = get_option('hall_tariffs', [
             'Main Hall Full Day' => 1200,
             'Main Hall Half Day' => 800,
@@ -484,7 +466,7 @@ class HallBookingIntegration {
         $invoice_id = wp_insert_post([
             'post_title'   => $title,
             'post_type'    => 'hall_invoice',
-            'post_status'  => 'draft', // FIXED: was 'pending'
+            'post_status'  => 'draft',
             'post_content' => "Booking for {$space} ({$event_time}) on {$event_date}. Guests: {$guest_count}.",
             'post_author'  => 1,
         ]);
@@ -607,7 +589,7 @@ class HallBookingIntegration {
                 'post_type' => 'event',
                 'meta_key' => '_booking_status',
                 'posts_per_page' => 10,
-                'post_status' => ['draft', 'pending', 'publish'] // FIXED: includes draft
+                'post_status' => ['draft', 'pending', 'publish']
             ]);
 
             if ($recent_bookings) {
@@ -640,116 +622,110 @@ class HallBookingIntegration {
         <?php
     }
 
-public function tariffs_page() {
-    if (!current_user_can('manage_options')) return;
+    public function tariffs_page() {
+        if (!current_user_can('manage_options')) return;
+        $default_tariffs = [
+            'HALL HIRE RATE' => [
+                'Rate per day up to 24h00' => 2200.00,
+                'Rate per hour or part thereof after 24h00' => 220.00,
+                'Rate per hour or part thereof for preparations' => 110.00,
+                'Rate per hour: for 1st hour' => 220.00,
+                'Rate per hour: after first hour – per hour' => 110.00,
+                'Meeting room : per hour' => 110.00,
+                'Refundable deposit at time of booking' => 2000.00,
+            ],
+            'SPOTLIGHTS & SOUND' => [
+                'Spotlights per event' => 250.00,
+                'Sound System' => 200.00,
+                'Projector plus screen' => 200.00,
+                'Wi Fi' => 50.00,
+            ],
+            'KITCHEN HIRE' => [
+                'Per event, including use of oven, stove fridges' => 650.00,
+                'Per event, for serving only' => 450.00,
+            ],
+            'CROCKERY (each)' => [
+                'Dinner Plate' => 2.00,
+                'Fish Plate' => 1.50,
+                'Side Plate' => 1.00,
+                'Soup/desert bowl' => 1.00,
+                'Cup & saucer' => 1.50,
+                'Teapot' => 8.50,
+                'Milk jug, 24ml' => 3.50,
+                'Sugar Bowl' => 2.50,
+                'Butter disk (fat)' => 1.00,
+                'Salt & pepper set' => 3.50,
+                'Plater, large glass' => 18.00,
+                'Refundable deposit for crockery, cutlery etc' => 500.00,
+            ],
+            'CUTLERY (each)' => [
+                'Table knife' => 1.00,
+                'Table fork' => 1.00,
+                'Desert spoon' => 1.00,
+                'Soup spoon' => 1.00,
+                'Teaspoon' => 1.00,
+                'Salad server set' => 6.00,
+            ],
+            'GLASSWARE (each)' => [
+                'Salad bowl medium' => 5.00,
+                'Water jug' => 4.00,
+                'Champagne flutes' => 1.20,
+                'White wine' => 1.20,
+                'Red wine' => 1.20,
+                'Pluto (cooldrink)' => 1.20,
+                'Beer' => 1.20,
+                'Tumbler' => 1.20,
+                'Sherry' => 2.20,
+            ],
+            'MISCELLANEOUS (each)' => [
+                'Ice Bucket' => 8.50,
+                'Trays' => 0.00,
+                'Urn (20 litre)' => 55.00,
+            ],
+            'TABLE LINEN (each)' => [
+                'White round table cloth (3m) or regular' => 60.00,
+                'Serviettes white' => 10.00,
+            ],
+            'CORKAGE FEES WHEN CLIENT SUPPLIES THEIR OWN' => [
+                'Per 750ml botle' => 30.00,
+            ],
+        ];
+        $tariffs = get_option('hall_tariffs', $default_tariffs);
 
-    // Full 2025 tariff/pricelist data structure
-    $default_tariffs = [
-        'HALL HIRE RATE' => [
-            'Rate per day up to 24h00' => 2200.00,
-            'Rate per hour or part thereof after 24h00' => 220.00,
-            'Rate per hour or part thereof for preparations' => 110.00,
-            'Rate per hour: for 1st hour' => 220.00,
-            'Rate per hour: after first hour – per hour' => 110.00,
-            'Meeting room : per hour' => 110.00,
-            'Refundable deposit at time of booking' => 2000.00,
-        ],
-        'SPOTLIGHTS & SOUND' => [
-            'Spotlights per event' => 250.00,
-            'Sound System' => 200.00,
-            'Projector plus screen' => 200.00,
-            'Wi Fi' => 50.00,
-        ],
-        'KITCHEN HIRE' => [
-            'Per event, including use of oven, stove fridges' => 650.00,
-            'Per event, for serving only' => 450.00,
-        ],
-        'CROCKERY (each)' => [
-            'Dinner Plate' => 2.00,
-            'Fish Plate' => 1.50,
-            'Side Plate' => 1.00,
-            'Soup/desert bowl' => 1.00,
-            'Cup & saucer' => 1.50,
-            'Teapot' => 8.50,
-            'Milk jug, 24ml' => 3.50,
-            'Sugar Bowl' => 2.50,
-            'Butter disk (fat)' => 1.00,
-            'Salt & pepper set' => 3.50,
-            'Plater, large glass' => 18.00,
-            'Refundable deposit for crockery, cutlery etc' => 500.00,
-        ],
-        'CUTLERY (each)' => [
-            'Table knife' => 1.00,
-            'Table fork' => 1.00,
-            'Desert spoon' => 1.00,
-            'Soup spoon' => 1.00,
-            'Teaspoon' => 1.00,
-            'Salad server set' => 6.00,
-        ],
-        'GLASSWARE (each)' => [
-            'Salad bowl medium' => 5.00,
-            'Water jug' => 4.00,
-            'Champagne flutes' => 1.20,
-            'White wine' => 1.20,
-            'Red wine' => 1.20,
-            'Pluto (cooldrink)' => 1.20,
-            'Beer' => 1.20,
-            'Tumbler' => 1.20,
-            'Sherry' => 2.20,
-        ],
-        'MISCELLANEOUS (each)' => [
-            'Ice Bucket' => 8.50,
-            'Trays' => 0.00,
-            'Urn (20 litre)' => 55.00,
-        ],
-        'TABLE LINEN (each)' => [
-            'White round table cloth (3m) or regular' => 60.00,
-            'Serviettes white' => 10.00,
-        ],
-        'CORKAGE FEES WHEN CLIENT SUPPLIES THEIR OWN' => [
-            'Per 750ml botle' => 30.00,
-        ],
-    ];
-
-    // Load tariffs from DB or use defaults
-    $tariffs = get_option('hall_tariffs', $default_tariffs);
-
-    // Handle POST
-    if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['tariffs'])) {
-        $new_tariffs = [];
-        foreach ($_POST['tariffs'] as $category => $items) {
-            foreach ($items as $label => $value) {
-                $new_tariffs[$category][$label] = floatval($value);
+        if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['tariffs'])) {
+            $new_tariffs = [];
+            foreach ($_POST['tariffs'] as $category => $items) {
+                foreach ($items as $label => $value) {
+                    $new_tariffs[$category][$label] = floatval($value);
+                }
             }
+            update_option('hall_tariffs', $new_tariffs);
+            $tariffs = $new_tariffs;
+            echo '<div class="notice notice-success"><p>Tariffs updated successfully!</p></div>';
         }
-        update_option('hall_tariffs', $new_tariffs);
-        $tariffs = $new_tariffs;
-        echo '<div class="notice notice-success"><p>Tariffs updated successfully!</p></div>';
-    }
-
-    ?>
-    <div class="wrap">
-        <h1>Sandbaai Hall Tariff Management (2025)</h1>
-        <form method="post">
-            <?php foreach ($tariffs as $category => $items): ?>
-                <h2 style="margin-top:2em;"><?php echo esc_html($category); ?></h2>
-                <table class="form-table">
-                <?php foreach ($items as $label => $value): ?>
-                    <tr>
-                        <th scope="row"><?php echo esc_html($label); ?></th>
-                        <td>
-                           <input type="number" step="0.01" min="0" name="tariffs[<?php echo esc_attr($category); ?>][<?php echo esc_attr($label); ?>]" value="<?php echo esc_attr($value); ?>" />
-<span style="margin-left:10px;font-weight:bold;">R <?php echo number_format((float)$value, 2); ?></span>
-                        </td>
-                    </tr>
+        ?>
+        <div class="wrap">
+            <h1>Sandbaai Hall Tariff Management (2025)</h1>
+            <form method="post">
+                <?php foreach ($tariffs as $category => $items): ?>
+                    <h2 style="margin-top:2em;"><?php echo esc_html($category); ?></h2>
+                    <table class="form-table">
+                    <?php foreach ($items as $label => $value): ?>
+                        <tr>
+                            <th scope="row"><?php echo esc_html($label); ?></th>
+                            <td>
+                            <input type="number" step="0.01" min="0" name="tariffs[<?php echo esc_attr($category); ?>][<?php echo esc_attr($label); ?>]" value="<?php echo esc_attr($value); ?>" />
+                            <span style="margin-left:10px;font-weight:bold;">R <?php echo number_format((float)$value, 2); ?></span>
+                            </td>
+                        </tr>
+                    <?php endforeach; ?>
+                    </table>
                 <?php endforeach; ?>
-                </table>
-            <?php endforeach; ?>
-            <input type="submit" value="Save Tariffs" class="button button-primary"/>
-        </form>
-    </div>
-    <?php
-}
+                <input type="submit" value="Save Tariffs" class="button button-primary"/>
+            </form>
+        </div>
+        <?php
+    }
 
     public function save_tariffs() {
         if (!current_user_can('manage_options')) wp_die('No permissions');
@@ -760,180 +736,29 @@ public function tariffs_page() {
         wp_redirect(admin_url('edit.php?post_type=event&page=hall-tariffs'));
         exit;
     }
-    
-public function display_tariffs_shortcode() {
-    $tariffs = get_option('hall_tariffs', []);
-    if (!$tariffs || !is_array($tariffs)) {
-        return "<p>No tariff data available.</p>";
-    }
-    ob_start();
-    echo '<div class="sandbaai-hall-tariffs">';
-    foreach ($tariffs as $category => $items) {
-        echo '<h2>' . esc_html($category) . '</h2>';
-        echo '<table style="width:100%;margin-bottom:2em;">';
-        foreach ($items as $label => $price) {
-            echo '<tr>';
-            echo '<td style="width:70%;">' . esc_html($label) . '</td>';
-            echo '<td style="width:30%;text-align:right;font-weight:bold;">R ' . number_format((float)$price, 2) . '</td>';
-            echo '</tr>';
-        }
-        echo '</table>';
-    }
-    echo '</div>';
-    return ob_get_clean();
-}
 
-public function quote_form_shortcode() {
-    $tariffs = get_option('hall_tariffs', []);
-    if (!$tariffs || !is_array($tariffs)) {
-        return "<p>No tariff data available.</p>";
-    }
-    ob_start();
-    ?>
-    <form id="sandbaai-quote-form">
-        <div class="sandbaai-hall-quote">
-        <?php foreach ($tariffs as $category => $items): ?>
-            <h2><?php echo esc_html($category); ?></h2>
-            <table style="width:100%;margin-bottom:2em;">
-            <?php foreach ($items as $label => $price): ?>
-                <tr>
-                    <td>
-                        <label>
-                            <input type="checkbox" name="selected[<?php echo esc_attr($category); ?>][<?php echo esc_attr($label); ?>]" 
-                            value="1" class="quote-item" data-price="<?php echo esc_attr($price); ?>" />
-                            <?php echo esc_html($label); ?>
-                        </label>
-                    </td>
-                    <td style="width:20%;">
-                        <input type="number" name="quantity[<?php echo esc_attr($category); ?>][<?php echo esc_attr($label); ?>]" 
-                        value="1" min="1" style="width:60px;" disabled />
-                    </td>
-                    <td style="width:20%;text-align:right;">
-                        R <?php echo number_format((float)$price, 2); ?>
-                    </td>
-                </tr>
-            <?php endforeach; ?>
-            </table>
-        <?php endforeach; ?>
-        <hr>
-        <div style="text-align:right;font-size:1.2em;">
-            <strong>Total: <span id="quote-total">R 0.00</span></strong>
-        </div>
-        <div style="margin-top:1em;">
-            <input type="text" name="user_email" placeholder="Your email address" required style="width:300px;">
-        </div>
-        <div style="margin-top:1em;">
-            <button type="submit" class="button button-primary">Generate Quote</button>
-        </div>
-        </div>
-    </form>
-    <div id="quote-response"></div>
-    <script>
-    // Simple live total calculation and quantity enable/disable
-    document.querySelectorAll('.quote-item').forEach(function(item){
-        item.addEventListener('change', function(){
-            var qtyInput = this.closest('tr').querySelector('input[type=number]');
-            qtyInput.disabled = !this.checked;
-            calculateTotal();
-        });
-    });
-    document.querySelectorAll('input[type=number][name^=quantity]').forEach(function(qty){
-        qty.addEventListener('input', calculateTotal);
-    });
-    function calculateTotal() {
-        var total = 0;
-        document.querySelectorAll('.quote-item').forEach(function(item){
-            if(item.checked) {
-                var qty = parseInt(item.closest('tr').querySelector('input[type=number]').value) || 1;
-                var price = parseFloat(item.getAttribute('data-price'));
-                total += qty * price;
+    public function display_tariffs_shortcode() {
+        $tariffs = get_option('hall_tariffs', []);
+        if (!$tariffs || !is_array($tariffs)) {
+            return "<p>No tariff data available.</p>";
+        }
+        ob_start();
+        echo '<div class="sandbaai-hall-tariffs">';
+        foreach ($tariffs as $category => $items) {
+            echo '<h2>' . esc_html($category) . '</h2>';
+            echo '<table style="width:100%;margin-bottom:2em;">';
+            foreach ($items as $label => $price) {
+                echo '<tr>';
+                echo '<td style="width:70%;">' . esc_html($label) . '</td>';
+                echo '<td style="width:30%;text-align:right;font-weight:bold;">R ' . number_format((float)$price, 2) . '</td>';
+                echo '</tr>';
             }
-        });
-        document.getElementById('quote-total').textContent = 'R ' + total.toFixed(2);
-    }
-    calculateTotal();
-    // Submit via AJAX (pseudo, you need to handle backend)
-document.getElementById('sandbaai-quote-form').addEventListener('submit', function(e){
-    e.preventDefault();
-    var formData = new FormData(this);
-    formData.append('action', 'sandbaai_save_quote');
-    fetch('<?php echo admin_url('admin-ajax.php'); ?>', {
-        method: 'POST',
-        body: formData
-    })
-    .then(response => response.json())
-    .then(data => {
-        if (data.success) {
-            document.getElementById('quote-response').textContent = "Draft quote generated and sent to admin for review!";
-        } else {
-            document.getElementById('quote-response').textContent = "There was an error generating your quote: " + data.data;
+            echo '</table>';
         }
-    });
-});
-    </script>
-    <?php
-    return ob_get_clean();
-}
-
-public function setup_ajax() {
-    add_action('wp_ajax_sandbaai_save_quote', array($this, 'ajax_save_quote'));
-    add_action('wp_ajax_nopriv_sandbaai_save_quote', array($this, 'ajax_save_quote'));
-}
-
-public function ajax_save_quote() {
-    if (empty($_POST['selected']) || empty($_POST['quantity']) || empty($_POST['user_email'])) {
-        wp_send_json_error('Missing data');
-    }
-    $selected = $_POST['selected'];
-    $quantities = $_POST['quantity'];
-    $user_email = sanitize_email($_POST['user_email']);
-
-    // Build items array for storage
-    $items = [];
-    $total = 0;
-    $tariffs = get_option('hall_tariffs', []);
-    foreach ($selected as $category => $cat_items) {
-        foreach ($cat_items as $label => $v) {
-            $qty = intval($quantities[$category][$label]);
-            $price = isset($tariffs[$category][$label]) ? floatval($tariffs[$category][$label]) : 0;
-            $items[] = [
-                'category' => $category,
-                'label' => $label,
-                'quantity' => $qty,
-                'price' => $price,
-                'subtotal' => $qty * $price,
-            ];
-            $total += $qty * $price;
-        }
+        echo '</div>';
+        return ob_get_clean();
     }
 
-    // Save as custom post type
-    $post_id = wp_insert_post([
-        'post_type' => 'hall_quote',
-        'post_status' => 'draft',
-        'post_title' => 'Quote for ' . $user_email . ' (' . date('Y-m-d H:i') . ')',
-        'post_content' => '',
-    ]);
-    if ($post_id) {
-        update_post_meta($post_id, 'quote_items', $items);
-        update_post_meta($post_id, 'quote_total', $total);
-        update_post_meta($post_id, 'user_email', $user_email);
-        wp_send_json_success(['message' => 'Quote saved!', 'quote_id' => $post_id]);
-    } else {
-        wp_send_json_error('Failed to save quote.');
-    }
-}
-
-    public function register_quote_post_type() {
-    register_post_type('hall_quote', [
-        'label' => 'Hall Quotes',
-        'public' => false,
-        'show_ui' => true,
-        'supports' => ['title'],
-        'menu_icon' => 'dashicons-media-text',
-    ]);
-}
-    
     //////////////////////
     // Booking approval workflow
     //////////////////////
@@ -943,14 +768,11 @@ public function ajax_save_quote() {
 
         if ($post->post_status === 'publish' && get_post_meta($post_id, '_booking_status', true) === 'pending_payment') {
             update_post_meta($post_id, '_booking_status', 'approved');
-            // Clean up title and description
             $public_description = get_post_meta($post_id, '_booking_event_description', true);
             if (!$public_description) $public_description = $post->post_excerpt ?: 'Private event at Sandbaai Hall';
             $is_private = get_post_meta($post_id, '_booking_is_private', true);
-            // Always use the original event title, even if private
             $original_title = get_post_meta($post_id, '_booking_event_title', true) ?: $post->post_title;
             wp_update_post(['ID' => $post_id, 'post_title' => $original_title, 'post_content' => $public_description]);
-            // Tag event as 'private' for filtering
             if ($is_private) {
                 wp_set_post_tags($post_id, 'private', true);
             } else {
@@ -1044,26 +866,26 @@ public function ajax_save_quote() {
     // Admin notification
     //////////////////////
 
-private function send_admin_notification($event_id, $contact_person, $space, $event_date, $event_title, $invoice_id) {
-    $admin_email = get_option('admin_email');
-    if (empty($admin_email)) {
-        error_log("HallBookingIntegration: admin_email option not set.");
-        return;
+    private function send_admin_notification($event_id, $contact_person, $space, $event_date, $event_title, $invoice_id) {
+        $admin_email = get_option('admin_email');
+        if (empty($admin_email)) {
+            error_log("HallBookingIntegration: admin_email option not set.");
+            return;
+        }
+        if (empty($event_id) || empty($invoice_id)) {
+            error_log("HallBookingIntegration: Missing event_id or invoice_id for admin notification.");
+            return;
+        }
+        $edit_url = admin_url("post.php?post={$event_id}&action=edit");
+        $invoice_url = admin_url("post.php?post={$invoice_id}&action=edit");
+        $subject = "🏢 New Hall Booking: {$contact_person} - {$space}";
+        $message = "A new booking request has been received and automatically created as a pending event.\n\n";
+        $message .= "📋 BOOKING DETAILS:\nContact: {$contact_person}\nSpace: {$space}\nDate: {$event_date}\nEvent: {$event_title}\n\n";
+        $message .= "Invoice: {$invoice_url}\n";
+        $message .= "⚡ QUICK APPROVAL:\n1. Verify payment\n2. Click here to approve: {$edit_url}\n3. Use the 'Quick Approve' button\n4. Set visibility\n\n";
+        $message .= "The event will automatically appear on your public calendar once approved.";
+        wp_mail($admin_email, $subject, $message);
     }
-    if (empty($event_id) || empty($invoice_id)) {
-        error_log("HallBookingIntegration: Missing event_id or invoice_id for admin notification.");
-        return;
-    }
-    $edit_url = admin_url("post.php?post={$event_id}&action=edit");
-    $invoice_url = admin_url("post.php?post={$invoice_id}&action=edit");
-    $subject = "🏢 New Hall Booking: {$contact_person} - {$space}";
-    $message = "A new booking request has been received and automatically created as a pending event.\n\n";
-    $message .= "📋 BOOKING DETAILS:\nContact: {$contact_person}\nSpace: {$space}\nDate: {$event_date}\nEvent: {$event_title}\n\n";
-    $message .= "Invoice: {$invoice_url}\n";
-    $message .= "⚡ QUICK APPROVAL:\n1. Verify payment\n2. Click here to approve: {$edit_url}\n3. Use the 'Quick Approve' button\n4. Set visibility\n\n";
-    $message .= "The event will automatically appear on your public calendar once approved.";
-    wp_mail($admin_email, $subject, $message);
-}
 }
 
 // Initialize plugin
