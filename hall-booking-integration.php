@@ -107,7 +107,15 @@ class HallBookingIntegration {
             update_post_meta($event_id, '_event_timezone', 'Africa/Johannesburg');
             update_post_meta($event_id, '_location_id', $location_id);
             update_post_meta($event_id, '_event_rsvp', 0);
-            
+			
+    // NEW: Properly set the location using Events Manager API
+    if (class_exists('EM_Event')) {
+        $em_event = new EM_Event($event_id);
+        if ($location_id) {
+            $em_event->location_id = $location_id;
+            $em_event->save();
+        }
+    }
             // Store booking details for easy access
             update_post_meta($event_id, '_booking_contact_person', $contact_person);
             update_post_meta($event_id, '_booking_email', $email);
