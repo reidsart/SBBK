@@ -423,6 +423,12 @@ class HallBookingIntegration {
             // Always use the original event title, even if private
             $original_title = get_post_meta($post_id, '_booking_event_title', true) ?: $post->post_title;
             wp_update_post(['ID' => $post_id, 'post_title' => $original_title, 'post_content' => $public_description]);
+            // Tag event as 'private' for filtering
+            if ($is_private) {
+                wp_set_post_tags($post_id, 'private', true);
+            } else {
+                wp_set_post_tags($post_id, '', false);
+            }
         }
     }
 
