@@ -398,9 +398,9 @@ class HallBookingIntegration {
 public function tariffs_page() {
     if (!current_user_can('manage_options')) return;
 
-    // Full 2025 tariff data structure
+    // Full 2025 tariff/pricelist data structure
     $default_tariffs = [
-        'Hall Hire Rate' => [
+        'HALL HIRE RATE' => [
             'Rate per day up to 24h00' => 2200.00,
             'Rate per hour or part thereof after 24h00' => 220.00,
             'Rate per hour or part thereof for preparations' => 110.00,
@@ -409,7 +409,61 @@ public function tariffs_page() {
             'Meeting room : per hour' => 110.00,
             'Refundable deposit at time of booking' => 2000.00,
         ],
-        // ...other categories...
+        'SPOTLIGHTS & SOUND' => [
+            'Spotlights per event' => 250.00,
+            'Sound System' => 200.00,
+            'Projector plus screen' => 200.00,
+            'Wi Fi' => 50.00,
+        ],
+        'KITCHEN HIRE' => [
+            'Per event, including use of oven, stove fridges' => 650.00,
+            'Per event, for serving only' => 450.00,
+        ],
+        'CROCKERY (each)' => [
+            'Dinner Plate' => 2.00,
+            'Fish Plate' => 1.50,
+            'Side Plate' => 1.00,
+            'Soup/desert bowl' => 1.00,
+            'Cup & saucer' => 1.50,
+            'Teapot' => 8.50,
+            'Milk jug, 24ml' => 3.50,
+            'Sugar Bowl' => 2.50,
+            'Butter disk (fat)' => 1.00,
+            'Salt & pepper set' => 3.50,
+            'Plater, large glass' => 18.00,
+            'Refundable deposit for crockery, cutlery etc' => 500.00,
+        ],
+        'CUTLERY (each)' => [
+            'Table knife' => 1.00,
+            'Table fork' => 1.00,
+            'Desert spoon' => 1.00,
+            'Soup spoon' => 1.00,
+            'Teaspoon' => 1.00,
+            'Salad server set' => 6.00,
+        ],
+        'GLASSWARE (each)' => [
+            'Salad bowl medium' => 5.00,
+            'Water jug' => 4.00,
+            'Champagne flutes' => 1.20,
+            'White wine' => 1.20,
+            'Red wine' => 1.20,
+            'Pluto (cooldrink)' => 1.20,
+            'Beer' => 1.20,
+            'Tumbler' => 1.20,
+            'Sherry' => 2.20,
+        ],
+        'MISCELLANEOUS (each)' => [
+            'Ice Bucket' => 8.50,
+            'Trays' => 0.00,
+            'Urn (20 litre)' => 55.00,
+        ],
+        'TABLE LINEN (each)' => [
+            'White round table cloth (3m) or regular' => 60.00,
+            'Serviettes white' => 10.00,
+        ],
+        'CORKAGE FEES WHEN CLIENT SUPPLIES THEIR OWN' => [
+            'Per 750ml botle' => 30.00,
+        ],
     ];
 
     // Load tariffs from DB or use defaults
@@ -430,10 +484,10 @@ public function tariffs_page() {
 
     ?>
     <div class="wrap">
-        <h1>Tariff Management</h1>
+        <h1>Sandbaai Hall Tariff Management (2025)</h1>
         <form method="post">
             <?php foreach ($tariffs as $category => $items): ?>
-                <h2><?php echo esc_html($category); ?></h2>
+                <h2 style="margin-top:2em;"><?php echo esc_html($category); ?></h2>
                 <table class="form-table">
                 <?php foreach ($items as $label => $value): ?>
                     <tr>
