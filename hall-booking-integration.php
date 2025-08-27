@@ -10,6 +10,7 @@ if (!defined('ABSPATH')) exit;
 
 class HallBookingIntegration {
     public function __construct() {
+
         add_action('wpcf7_mail_sent', array($this, 'handle_booking_submission'));
         add_action('admin_menu', array($this, 'add_admin_menu'));
         add_action('add_meta_boxes', array($this, 'add_approval_metabox'));
@@ -17,6 +18,8 @@ class HallBookingIntegration {
         add_action('init', array($this, 'register_invoice_post_type'));
         add_action('admin_post_hall_save_tariffs', array($this, 'save_tariffs'));
         add_action('init', array($this, 'register_quote_post_type'));
+        add_action('add_meta_boxes', array($this, 'add_quote_metabox')); // For quote admin
+        add_action('admin_init', array($this, 'maybe_send_invoice')); // For sending invoice
         add_shortcode('sandbaai_hall_tariffs', array($this, 'display_tariffs_shortcode'));
         add_shortcode('sandbaai_hall_quote_form', array($this, 'quote_form_shortcode'));
         $this->setup_ajax();
@@ -138,7 +141,245 @@ class HallBookingIntegration {
             // DO NOT use wp_redirect here; let CF7 handle AJAX
         }
     }
+    
+    /////////////////////
+    // QUOTE SYSTEM
+    /////////////////////
 
+    // 1. Setup AJAX for saving quote
+    public function setup_ajax() {
+        add_action('wp_ajax_sandbaai_save_quote', array($this, 'ajax_save_quote'));
+        add_action('wp_ajax_nopriv_sandbaai_save_quote', array($this, 'ajax_save_quote'));
+    }
+
+    // 2. AJAX handler to save quote as custom post type
+    public function ajax_save_quote() {
+        if (empty($_POST['selected']) || empty($_POST['quantity']) || empty($_POST['user_email'])) {
+            wp_send_json_error('Missing data');
+        }
+        $selected = $_POST['selected'];
+        $quantities = $_POST['quantity'];
+        $user_email = sanitize_email($_POST['user_email']);
+
+        // Build items array for storage
+        $items = [];
+        $total = 0;
+        $tariffs = get_option('hall_tariffs', []);
+        foreach ($selected as $category => $cat_items) {
+            foreach ($cat_items as $label => $v) {
+                $qty = intval($quantities[$category][$label]);
+                $price = isset($tariffs[$category][$label]) ? floatval($tariffs[$category][$label]) : 0;
+                $items[] = [
+                    'category' => $category,
+                    'label' => $label,
+                    'quantity' => $qty,
+                    'price' => $price,
+                    'subtotal' => $qty * $price,
+                ];
+                $total += $qty * $price;
+            }
+        }
+
+        // Save as custom post type
+        $post_id = wp_insert_post([
+            'post_type' => 'hall_quote',
+            'post_status' => 'draft',
+            'post_title' => 'Quote for ' . $user_email . ' (' . date('Y-m-d H:i') . ')',
+            'post_content' => '',
+        ]);
+        if ($post_id) {
+            update_post_meta($post_id, 'quote_items', $items);
+            update_post_meta($post_id, 'quote_total', $total);
+            update_post_meta($post_id, 'user_email', $user_email);
+            update_post_meta($post_id, 'invoice_sent', 0);
+            wp_send_json_success(['message' => 'Quote saved!', 'quote_id' => $post_id]);
+        } else {
+            wp_send_json_error('Failed to save quote.');
+        }
+    }
+
+    // 3. Register custom post type for quotes
+    public function register_quote_post_type() {
+        register_post_type('hall_quote', [
+            'label' => 'Hall Quotes',
+            'public' => false,
+            'show_ui' => true,
+            'show_in_menu' => 'edit.php?post_type=event', // Show under Events Manager
+            'supports' => ['title'],
+            'menu_icon' => 'dashicons-media-text',
+        ]);
+    }
+
+    // 4. Add meta box to quote edit screen for admin review & send
+    public function add_quote_metabox() {
+        add_meta_box(
+            'hall_quote_metabox',
+            'Quote Details & Send Invoice',
+            array($this, 'quote_metabox_content'),
+            'hall_quote',
+            'normal',
+            'high'
+        );
+    }
+
+    // 5. Meta box content (quote table and send button)
+    public function quote_metabox_content($post) {
+        $items = get_post_meta($post->ID, 'quote_items', true);
+        $total = get_post_meta($post->ID, 'quote_total', true);
+        $user_email = get_post_meta($post->ID, 'user_email', true);
+        $sent = get_post_meta($post->ID, 'invoice_sent', true);
+
+        echo "<h3>Quote for: <a href='mailto:" . esc_html($user_email) . "'>" . esc_html($user_email) . "</a></h3>";
+        echo "<table class='widefat'>";
+        echo "<thead><tr><th>Category</th><th>Item</th><th>Qty</th><th>Unit Price</th><th>Subtotal</th></tr></thead><tbody>";
+        if (is_array($items)) {
+            foreach($items as $item) {
+                echo "<tr>";
+                echo "<td>" . esc_html($item['category']) . "</td>";
+                echo "<td>" . esc_html($item['label']) . "</td>";
+                echo "<td>" . esc_html($item['quantity']) . "</td>";
+                echo "<td>R " . number_format((float)$item['price'], 2) . "</td>";
+                echo "<td>R " . number_format((float)$item['subtotal'], 2) . "</td>";
+                echo "</tr>";
+            }
+        }
+        echo "</tbody></table>";
+        echo "<h4>Total: R " . number_format((float)$total, 2) . "</h4>";
+
+        // Send invoice button
+        if ($sent) {
+            echo "<p style='color:green;font-weight:bold;'>✅ Invoice sent to user.</p>";
+        } else {
+            echo "<form method='post'><input type='hidden' name='send_invoice_quote_id' value='" . esc_attr($post->ID) . "' />";
+            echo "<button type='submit' class='button button-primary'>Send Invoice to User</button></form>";
+        }
+    }
+
+    // 6. Handle invoice sending and marking as sent
+    public function maybe_send_invoice() {
+        if (is_admin() && isset($_POST['send_invoice_quote_id'])) {
+            $quote_id = intval($_POST['send_invoice_quote_id']);
+            $user_email = get_post_meta($quote_id, 'user_email', true);
+            $items = get_post_meta($quote_id, 'quote_items', true);
+            $total = get_post_meta($quote_id, 'quote_total', true);
+
+            // Build email
+            $subject = "Sandbaai Hall Invoice/Quote";
+            $message = "Thank you for your booking enquiry. Here is your quote:\n\n";
+            foreach ($items as $item) {
+                $message .= "{$item['category']} - {$item['label']}: {$item['quantity']} x R " . number_format((float)$item['price'], 2);
+                $message .= " = R " . number_format((float)$item['subtotal'], 2) . "\n";
+            }
+            $message .= "\nTotal: R " . number_format((float)$total, 2) . "\n";
+            $message .= "\nPlease reply to confirm your booking or if you have any questions.";
+
+            // Send email
+            wp_mail($user_email, $subject, $message);
+
+            // Mark sent
+            update_post_meta($quote_id, 'invoice_sent', 1);
+
+            // Redirect to prevent resubmission
+            wp_redirect(admin_url('post.php?post=' . $quote_id . '&action=edit'));
+            exit;
+        }
+    }
+
+    /////////////////////
+    // SHORTCODE FOR QUOTE FORM (frontend)
+    /////////////////////
+    public function quote_form_shortcode() {
+        $tariffs = get_option('hall_tariffs', []);
+        if (!$tariffs || !is_array($tariffs)) {
+            return "<p>No tariff data available.</p>";
+        }
+        ob_start();
+        ?>
+        <form id="sandbaai-quote-form">
+            <div class="sandbaai-hall-quote">
+            <?php foreach ($tariffs as $category => $items): ?>
+                <h2><?php echo esc_html($category); ?></h2>
+                <table style="width:100%;margin-bottom:2em;">
+                <?php foreach ($items as $label => $price): ?>
+                    <tr>
+                        <td>
+                            <label>
+                                <input type="checkbox" name="selected[<?php echo esc_attr($category); ?>][<?php echo esc_attr($label); ?>]" 
+                                value="1" class="quote-item" data-price="<?php echo esc_attr($price); ?>" />
+                                <?php echo esc_html($label); ?>
+                            </label>
+                        </td>
+                        <td style="width:20%;">
+                            <input type="number" name="quantity[<?php echo esc_attr($category); ?>][<?php echo esc_attr($label); ?>]" 
+                            value="1" min="1" style="width:60px;" disabled />
+                        </td>
+                        <td style="width:20%;text-align:right;">
+                            R <?php echo number_format((float)$price, 2); ?>
+                        </td>
+                    </tr>
+                <?php endforeach; ?>
+                </table>
+            <?php endforeach; ?>
+            <hr>
+            <div style="text-align:right;font-size:1.2em;">
+                <strong>Total: <span id="quote-total">R 0.00</span></strong>
+            </div>
+            <div style="margin-top:1em;">
+                <input type="text" name="user_email" placeholder="Your email address" required style="width:300px;">
+            </div>
+            <div style="margin-top:1em;">
+                <button type="submit" class="button button-primary">Generate Quote</button>
+            </div>
+            </div>
+        </form>
+        <div id="quote-response"></div>
+        <script>
+        // Simple live total calculation and quantity enable/disable
+        document.querySelectorAll('.quote-item').forEach(function(item){
+            item.addEventListener('change', function(){
+                var qtyInput = this.closest('tr').querySelector('input[type=number]');
+                qtyInput.disabled = !this.checked;
+                calculateTotal();
+            });
+        });
+        document.querySelectorAll('input[type=number][name^=quantity]').forEach(function(qty){
+            qty.addEventListener('input', calculateTotal);
+        });
+        function calculateTotal() {
+            var total = 0;
+            document.querySelectorAll('.quote-item').forEach(function(item){
+                if(item.checked) {
+                    var qty = parseInt(item.closest('tr').querySelector('input[type=number]').value) || 1;
+                    var price = parseFloat(item.getAttribute('data-price'));
+                    total += qty * price;
+                }
+            });
+            document.getElementById('quote-total').textContent = 'R ' + total.toFixed(2);
+        }
+        calculateTotal();
+        // Submit via AJAX
+        document.getElementById('sandbaai-quote-form').addEventListener('submit', function(e){
+            e.preventDefault();
+            var formData = new FormData(this);
+            formData.append('action', 'sandbaai_save_quote');
+            fetch('<?php echo admin_url('admin-ajax.php'); ?>', {
+                method: 'POST',
+                body: formData
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    document.getElementById('quote-response').textContent = "Draft quote generated and sent to admin for review!";
+                } else {
+                    document.getElementById('quote-response').textContent = "There was an error generating your quote: " + data.data;
+                }
+            });
+        });
+        </script>
+        <?php
+        return ob_get_clean();
+    }
+    
     //////////////////////////
     // Helper and workflow functions
     //////////////////////////
