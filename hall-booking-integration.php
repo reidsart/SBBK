@@ -16,6 +16,7 @@ class HallBookingIntegration {
         add_action('save_post', array($this, 'handle_event_approval'), 10, 3);
         add_action('init', array($this, 'register_invoice_post_type'));
         add_action('admin_post_hall_save_tariffs', array($this, 'save_tariffs'));
+        add_shortcode('sandbaai_hall_tariffs', array($this, 'display_tariffs_shortcode'));
     }
 
     /**
@@ -515,7 +516,29 @@ public function tariffs_page() {
         wp_redirect(admin_url('edit.php?post_type=event&page=hall-tariffs'));
         exit;
     }
-
+    
+public function display_tariffs_shortcode() {
+    $tariffs = get_option('hall_tariffs', []);
+    if (!$tariffs || !is_array($tariffs)) {
+        return "<p>No tariff data available.</p>";
+    }
+    ob_start();
+    echo '<div class="sandbaai-hall-tariffs">';
+    foreach ($tariffs as $category => $items) {
+        echo '<h2>' . esc_html($category) . '</h2>';
+        echo '<table style="width:100%;margin-bottom:2em;">';
+        foreach ($items as $label => $price) {
+            echo '<tr>';
+            echo '<td style="width:70%;">' . esc_html($label) . '</td>';
+            echo '<td style="width:30%;text-align:right;font-weight:bold;">R ' . number_format((float)$price, 2) . '</td>';
+            echo '</tr>';
+        }
+        echo '</table>';
+    }
+    echo '</div>';
+    return ob_get_clean();
+}
+    
     //////////////////////
     // Booking approval workflow
     //////////////////////
