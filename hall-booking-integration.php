@@ -16,8 +16,10 @@ class HallBookingIntegration {
         add_action('save_post', array($this, 'handle_event_approval'), 10, 3);
         add_action('init', array($this, 'register_invoice_post_type'));
         add_action('admin_post_hall_save_tariffs', array($this, 'save_tariffs'));
+        add_action('init', array($this, 'register_quote_post_type'));
         add_shortcode('sandbaai_hall_tariffs', array($this, 'display_tariffs_shortcode'));
         add_shortcode('sandbaai_hall_quote_form', array($this, 'quote_form_shortcode'));
+        $this->setup_ajax();
     }
 
     /**
@@ -610,16 +612,87 @@ public function quote_form_shortcode() {
     }
     calculateTotal();
     // Submit via AJAX (pseudo, you need to handle backend)
-    document.getElementById('sandbaai-quote-form').addEventListener('submit', function(e){
-        e.preventDefault();
-        var formData = new FormData(this);
-        document.getElementById('quote-response').textContent = "Draft quote generated! (Demo only: backend processing required)";
-        // TODO: AJAX submit to backend to save draft invoice and notify admin
+document.getElementById('sandbaai-quote-form').addEventListener('submit', function(e){
+    e.preventDefault();
+    var formData = new FormData(this);
+    formData.append('action', 'sandbaai_save_quote');
+    fetch('<?php echo admin_url('admin-ajax.php'); ?>', {
+        method: 'POST',
+        body: formData
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            document.getElementById('quote-response').textContent = "Draft quote generated and sent to admin for review!";
+        } else {
+            document.getElementById('quote-response').textContent = "There was an error generating your quote: " + data.data;
+        }
     });
+});
     </script>
     <?php
     return ob_get_clean();
 }
+
+public function setup_ajax() {
+    add_action('wp_ajax_sandbaai_save_quote', array($this, 'ajax_save_quote'));
+    add_action('wp_ajax_nopriv_sandbaai_save_quote', array($this, 'ajax_save_quote'));
+}
+
+public function ajax_save_quote() {
+    if (empty($_POST['selected']) || empty($_POST['quantity']) || empty($_POST['user_email'])) {
+        wp_send_json_error('Missing data');
+    }
+    $selected = $_POST['selected'];
+    $quantities = $_POST['quantity'];
+    $user_email = sanitize_email($_POST['user_email']);
+
+    // Build items array for storage
+    $items = [];
+    $total = 0;
+    $tariffs = get_option('hall_tariffs', []);
+    foreach ($selected as $category => $cat_items) {
+        foreach ($cat_items as $label => $v) {
+            $qty = intval($quantities[$category][$label]);
+            $price = isset($tariffs[$category][$label]) ? floatval($tariffs[$category][$label]) : 0;
+            $items[] = [
+                'category' => $category,
+                'label' => $label,
+                'quantity' => $qty,
+                'price' => $price,
+                'subtotal' => $qty * $price,
+            ];
+            $total += $qty * $price;
+        }
+    }
+
+    // Save as custom post type
+    $post_id = wp_insert_post([
+        'post_type' => 'hall_quote',
+        'post_status' => 'draft',
+        'post_title' => 'Quote for ' . $user_email . ' (' . date('Y-m-d H:i') . ')',
+        'post_content' => '',
+    ]);
+    if ($post_id) {
+        update_post_meta($post_id, 'quote_items', $items);
+        update_post_meta($post_id, 'quote_total', $total);
+        update_post_meta($post_id, 'user_email', $user_email);
+        wp_send_json_success(['message' => 'Quote saved!', 'quote_id' => $post_id]);
+    } else {
+        wp_send_json_error('Failed to save quote.');
+    }
+}
+
+    public function register_quote_post_type() {
+    register_post_type('hall_quote', [
+        'label' => 'Hall Quotes',
+        'public' => false,
+        'show_ui' => true,
+        'supports' => ['title'],
+        'menu_icon' => 'dashicons-media-text',
+    ]);
+}
+    
     //////////////////////
     // Booking approval workflow
     //////////////////////
