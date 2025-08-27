@@ -100,7 +100,7 @@ class HallBookingIntegration {
                 $em_event = new EM_Event($event_id);
                 if ($location_id && get_post_status($location_id) == 'publish') {
                     $em_event->location_id = $location_id;
-                    $em_event->location = EM_Location::find($location_id);
+                    $em_event->location = new EM_Location($location_id);
                     $em_event->save();
                 }
             }
