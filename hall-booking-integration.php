@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Hall Booking Integration
  * Description: Automates Sandbaai Hall bookings via Contact Form 7 and Events Manager, with invoice generation and tariff management.
- * Version: 2.1
+ * Version: 2.2
  * Author: Christopher Reid, Copilot
  */
 
@@ -41,7 +41,10 @@ class HallBookingIntegration {
         $event_date     = sanitize_text_field($this->get_first($posted_data['event-date'] ?? ''));
         $event_time_raw = $this->get_first($posted_data['event-time'] ?? '');
         $event_time     = sanitize_text_field($event_time_raw);
-        $custom_hours   = sanitize_text_field($this->get_first($posted_data['custom-hours'] ?? ''));
+
+        // Custom hours now separated into start/end time
+        $custom_start   = sanitize_text_field($this->get_first($posted_data['custom-start-time'] ?? ''));
+        $custom_end     = sanitize_text_field($this->get_first($posted_data['custom-end-time'] ?? ''));
         $guest_count    = intval($this->get_first($posted_data['guest-count'] ?? 0));
         $event_title    = sanitize_text_field($this->get_first($posted_data['event-title'] ?? ''));
         $description    = sanitize_textarea_field($this->get_first($posted_data['event-description'] ?? ''));
@@ -52,8 +55,8 @@ class HallBookingIntegration {
         $event_privacy_raw = strtolower($this->get_first($posted_data['event-privacy'] ?? 'private'));
         $is_private     = ($event_privacy_raw === 'private');
 
-        $public_title   = $is_private ? 'Private Event' : ($event_title ?: 'Event');
-        $pending_title  = "PENDING: {$public_title}";
+        // Store original title, do not rename for privacy
+        $pending_title  = "PENDING: " . ($event_title ?: 'Event');
         $public_description = $description ?: 'Private event at Sandbaai Hall';
 
         // Admin notes - stored as meta only, not in post_content
@@ -65,14 +68,17 @@ class HallBookingIntegration {
             'space' => $space,
             'guest_count' => $guest_count,
             'event_time' => $event_time,
-            'custom_hours' => $custom_hours,
+            'custom_start' => $custom_start,
+            'custom_end' => $custom_end,
             'setup_requirements' => $setup_requirements,
             'other_setup' => $other_setup,
             'catering' => $catering
         ]);
 
         $location_id = $this->get_location_id($space);
-        $times = $this->parse_event_times($event_time, $custom_hours);
+
+        // Parse times (handles custom start/end)
+        $times = $this->parse_event_times($event_time, $custom_start, $custom_end);
 
         // Create event post for Events Manager (**post_content is now the user description**)
         $event_id = wp_insert_post([
@@ -97,8 +103,8 @@ class HallBookingIntegration {
 
             // Set location (robust for EM)
             if (class_exists('EM_Event')) {
-            $em_event = new EM_Event($event_id);
-            if ($location_id && get_post_status($location_id) == 'publish') {
+                $em_event = new EM_Event($event_id);
+                if ($location_id && get_post_status($location_id) == 'publish') {
                     $em_event->location_id = $location_id;
                     $em_event->location = new EM_Location($location_id);
                     $em_event->save();
@@ -116,12 +122,14 @@ class HallBookingIntegration {
             update_post_meta($event_id, '_booking_is_private', $is_private ? 1 : 0);
             update_post_meta($event_id, '_booking_event_description', $description);
             update_post_meta($event_id, '_booking_admin_notes', $admin_notes);
+            update_post_meta($event_id, '_booking_custom_start', $custom_start);
+            update_post_meta($event_id, '_booking_custom_end', $custom_end);
 
             // Create initial invoice
             $invoice_id = $this->create_invoice_for_booking($event_id, $contact_person, $email, $space, $event_date, $event_time, $guest_count);
 
             // Notify booking admin
-            $this->send_admin_notification($event_id, $contact_person, $space, $event_date, $public_title, $invoice_id);
+            $this->send_admin_notification($event_id, $contact_person, $space, $event_date, $event_title, $invoice_id);
 
             // DO NOT use wp_redirect here; let CF7 handle AJAX
         }
@@ -147,7 +155,9 @@ class HallBookingIntegration {
         $content .= "<strong>Phone:</strong> <a href='tel:{$data['phone']}'>{$data['phone']}</a><br>";
         $content .= "<h3>🏢 Booking Details</h3><strong>Space Requested:</strong> {$data['space']}<br>";
         $content .= "<strong>Expected Guests:</strong> {$data['guest_count']}<br><strong>Time:</strong> {$data['event_time']}<br>";
-        if ($data['custom_hours']) $content .= "<strong>Custom Hours:</strong> {$data['custom_hours']}<br>";
+        if (!empty($data['custom_start']) && !empty($data['custom_end'])) {
+            $content .= "<strong>Custom Hours:</strong> {$data['custom_start']} to {$data['custom_end']}<br>";
+        }
         if ($data['setup_requirements']) $content .= "<h3>⚙️ Setup Requirements</h3><p>{$data['setup_requirements']}</p>";
         if ($data['other_setup']) $content .= "<strong>Additional Setup:</strong> {$data['other_setup']}<br>";
         if ($data['catering'] && $data['catering'] != 'No catering') $content .= "<h3>🍽️ Catering</h3><p>{$data['catering']}</p>";
@@ -156,13 +166,21 @@ class HallBookingIntegration {
         return $content;
     }
 
-    private function parse_event_times($event_time, $custom_hours = '') {
+    // Modified: now supports custom start/end time (HH:MM)
+    private function parse_event_times($event_time, $custom_start = '', $custom_end = '') {
         $times = [
             'Full Day (8am-12:00am)' => ['start' => '08:00:00', 'end' => '24:00:00'],
             'Morning (8am-1pm)'      => ['start' => '08:00:00', 'end' => '13:00:00'],
             'Afternoon (1pm-6pm)'    => ['start' => '13:00:00', 'end' => '18:00:00'],
             'Evening (6pm-12am)'     => ['start' => '18:00:00', 'end' => '24:00:00']
         ];
+        if ($event_time === 'Custom Hours (specify below)' && !empty($custom_start) && !empty($custom_end)) {
+            // Expect custom_start and custom_end as HH:MM
+            return [
+                'start' => $custom_start . ':00', // add seconds
+                'end'   => $custom_end . ':00'
+            ];
+        }
         if (isset($times[$event_time])) return $times[$event_time];
         return ['start' => '08:00:00', 'end' => '17:00:00'];
     }
@@ -420,6 +438,7 @@ class HallBookingIntegration {
             // Clean up title and description
             $public_description = get_post_meta($post_id, '_booking_event_description', true);
             if (!$public_description) $public_description = $post->post_excerpt ?: 'Private event at Sandbaai Hall';
+            $is_private = get_post_meta($post_id, '_booking_is_private', true);
             // Always use the original event title, even if private
             $original_title = get_post_meta($post_id, '_booking_event_title', true) ?: $post->post_title;
             wp_update_post(['ID' => $post_id, 'post_title' => $original_title, 'post_content' => $public_description]);
@@ -517,7 +536,7 @@ class HallBookingIntegration {
     // Admin notification
     //////////////////////
 
-private function send_admin_notification($event_id, $contact_person, $space, $event_date, $public_title, $invoice_id) {
+private function send_admin_notification($event_id, $contact_person, $space, $event_date, $event_title, $invoice_id) {
     $admin_email = get_option('admin_email');
     if (empty($admin_email)) {
         error_log("HallBookingIntegration: admin_email option not set.");
@@ -531,7 +550,7 @@ private function send_admin_notification($event_id, $contact_person, $space, $ev
     $invoice_url = admin_url("post.php?post={$invoice_id}&action=edit");
     $subject = "🏢 New Hall Booking: {$contact_person} - {$space}";
     $message = "A new booking request has been received and automatically created as a pending event.\n\n";
-    $message .= "📋 BOOKING DETAILS:\nContact: {$contact_person}\nSpace: {$space}\nDate: {$event_date}\nEvent: {$public_title}\n\n";
+    $message .= "📋 BOOKING DETAILS:\nContact: {$contact_person}\nSpace: {$space}\nDate: {$event_date}\nEvent: {$event_title}\n\n";
     $message .= "Invoice: {$invoice_url}\n";
     $message .= "⚡ QUICK APPROVAL:\n1. Verify payment\n2. Click here to approve: {$edit_url}\n3. Use the 'Quick Approve' button\n4. Set visibility\n\n";
     $message .= "The event will automatically appear on your public calendar once approved.";
