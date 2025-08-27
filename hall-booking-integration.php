@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Hall Booking Integration
  * Description: Automates Sandbaai Hall bookings via Contact Form 7 and Events Manager, with invoice generation and tariff management.
- * Version: 2.2
+ * Version: 2.3
  * Author: Christopher Reid, Copilot
  */
 
@@ -147,23 +147,25 @@ class HallBookingIntegration {
     public function setup_ajax() {
         add_action('wp_ajax_sandbaai_save_quote', array($this, 'ajax_save_quote'));
         add_action('wp_ajax_nopriv_sandbaai_save_quote', array($this, 'ajax_save_quote'));
+        add_action('wp_ajax_sandbaai_update_quote', array($this, 'ajax_update_quote'));
     }
 
     public function ajax_save_quote() {
-        if (empty($_POST['selected']) || empty($_POST['quantity']) || empty($_POST['user_email'])) {
+        if (empty($_POST['selected']) || empty($_POST['user_email'])) {
             wp_send_json_error('Missing data');
         }
         $selected = $_POST['selected'];
-        $quantities = $_POST['quantity'];
+        $quantities = $_POST['quantity'] ?? [];
         $user_email = sanitize_email($_POST['user_email']);
 
-        // Build items array for storage
         $items = [];
         $total = 0;
         $tariffs = get_option('hall_tariffs', []);
         foreach ($selected as $category => $cat_items) {
             foreach ($cat_items as $label => $v) {
-                $qty = intval($quantities[$category][$label]);
+                // Items that only allow 0 or 1 (no quantity field)
+                $no_quantity = $this->is_no_quantity_item($category, $label);
+                $qty = $no_quantity ? 1 : intval($quantities[$category][$label] ?? 1);
                 $price = isset($tariffs[$category][$label]) ? floatval($tariffs[$category][$label]) : 0;
                 $items[] = [
                     'category' => $category,
@@ -175,8 +177,21 @@ class HallBookingIntegration {
                 $total += $qty * $price;
             }
         }
+        // If deposit should be included, add it if not present
+        if (isset($tariffs['HALL HIRE RATE']['Refundable deposit at time of booking'])
+            && !$this->item_exists($items, 'HALL HIRE RATE', 'Refundable deposit at time of booking')
+            && $this->should_include_deposit($selected)) {
+            $deposit_price = floatval($tariffs['HALL HIRE RATE']['Refundable deposit at time of booking']);
+            $items[] = [
+                'category' => 'HALL HIRE RATE',
+                'label' => 'Refundable deposit at time of booking',
+                'quantity' => 1,
+                'price' => $deposit_price,
+                'subtotal' => $deposit_price,
+            ];
+            $total += $deposit_price;
+        }
 
-        // Save as custom post type
         $post_id = wp_insert_post([
             'post_type' => 'hall_quote',
             'post_status' => 'draft',
@@ -194,13 +209,32 @@ class HallBookingIntegration {
         }
     }
 
+    // AJAX: Update quote from admin (inline editing)
+    public function ajax_update_quote() {
+        if (!current_user_can('edit_posts')) wp_send_json_error('No permission');
+        $quote_id = intval($_POST['quote_id'] ?? 0);
+        $items = $_POST['items'] ?? [];
+        $user_email = sanitize_email($_POST['user_email'] ?? '');
+        $total = 0;
+        foreach ($items as &$item) {
+            $item['quantity'] = intval($item['quantity']);
+            $item['price'] = floatval($item['price']);
+            $item['subtotal'] = $item['quantity'] * $item['price'];
+            $total += $item['subtotal'];
+        }
+        update_post_meta($quote_id, 'quote_items', $items);
+        update_post_meta($quote_id, 'quote_total', $total);
+        update_post_meta($quote_id, 'user_email', $user_email);
+        wp_send_json_success(['message' => "Quote updated", 'total' => $total]);
+    }
+
     public function register_quote_post_type() {
         register_post_type('hall_quote', [
             'label' => 'Hall Quotes',
             'public' => false,
             'show_ui' => true,
             'show_in_menu' => 'edit.php?post_type=event',
-            'supports' => ['title'],
+            'supports' => ['title', 'editor'], // Allow admin to add notes etc.
             'menu_icon' => 'dashicons-media-text',
         ]);
     }
@@ -222,29 +256,85 @@ class HallBookingIntegration {
         $user_email = get_post_meta($post->ID, 'user_email', true);
         $sent = get_post_meta($post->ID, 'invoice_sent', true);
 
-        echo "<h3>Quote for: <a href='mailto:" . esc_html($user_email) . "'>" . esc_html($user_email) . "</a></h3>";
-        echo "<table class='widefat'>";
+        echo "<h3>Quote for: <input type='email' id='quote-user-email' value='" . esc_attr($user_email) . "' style='width:250px' /></h3>";
+        echo "<table class='widefat' id='quote-edit-table'>";
         echo "<thead><tr><th>Category</th><th>Item</th><th>Qty</th><th>Unit Price</th><th>Subtotal</th></tr></thead><tbody>";
         if (is_array($items)) {
-            foreach($items as $item) {
-                echo "<tr>";
+            foreach($items as $idx => $item) {
+                $readonly = ($item['label'] === 'Refundable deposit at time of booking');
+                $no_quantity = $this->is_no_quantity_item($item['category'], $item['label']);
+                echo "<tr data-idx='{$idx}'>";
                 echo "<td>" . esc_html($item['category']) . "</td>";
                 echo "<td>" . esc_html($item['label']) . "</td>";
-                echo "<td>" . esc_html($item['quantity']) . "</td>";
-                echo "<td>R " . number_format((float)$item['price'], 2) . "</td>";
-                echo "<td>R " . number_format((float)$item['subtotal'], 2) . "</td>";
+                // Quantity input or static 1
+                if ($readonly || $no_quantity) {
+                    echo "<td><input type='number' min='1' value='1' readonly style='width:60px;background:#eee;' class='item-qty' /></td>";
+                } else {
+                    echo "<td><input type='number' min='1' value='" . esc_attr($item['quantity']) . "' class='item-qty' style='width:60px;' /></td>";
+                }
+                // Price editable unless deposit
+                if ($readonly) {
+                    echo "<td><input type='number' step='0.01' min='0' value='" . esc_attr($item['price']) . "' readonly style='width:90px;background:#eee;' class='item-price' /></td>";
+                } else {
+                    echo "<td><input type='number' step='0.01' min='0' value='" . esc_attr($item['price']) . "' class='item-price' style='width:90px;' /></td>";
+                }
+                echo "<td class='item-subtotal'>R " . number_format((float)$item['subtotal'], 2) . "</td>";
                 echo "</tr>";
             }
         }
         echo "</tbody></table>";
-        echo "<h4>Total: R " . number_format((float)$total, 2) . "</h4>";
+        echo "<h4>Total: R <span id='quote-total'>" . number_format((float)$total, 2) . "</span></h4>";
 
         if ($sent) {
             echo "<p style='color:green;font-weight:bold;'>✅ Invoice sent to user.</p>";
         } else {
             echo "<form method='post'><input type='hidden' name='send_invoice_quote_id' value='" . esc_attr($post->ID) . "' />";
             echo "<button type='submit' class='button button-primary'>Send Invoice to User</button></form>";
+            echo "<button type='button' class='button' id='save-quote-btn'>Save Changes</button>";
         }
+        ?>
+        <script>
+        // Inline editing
+        (function(){
+            function updateTotal() {
+                var total = 0;
+                document.querySelectorAll("#quote-edit-table tbody tr").forEach(function(row){
+                    var qty = parseInt(row.querySelector('.item-qty').value) || 1;
+                    var price = parseFloat(row.querySelector('.item-price').value) || 0;
+                    var subtotal = qty * price;
+                    row.querySelector('.item-subtotal').textContent = "R " + subtotal.toFixed(2);
+                    total += subtotal;
+                });
+                document.getElementById('quote-total').textContent = total.toFixed(2);
+            }
+            document.querySelectorAll('.item-qty, .item-price').forEach(function(inp){
+                inp.addEventListener('input', updateTotal);
+            });
+            document.getElementById('save-quote-btn').addEventListener('click', function(){
+                var rows = document.querySelectorAll("#quote-edit-table tbody tr");
+                var items = [];
+                rows.forEach(function(row){
+                    items.push({
+                        category: row.children[0].textContent,
+                        label: row.children[1].textContent,
+                        quantity: row.querySelector('.item-qty').value,
+                        price: row.querySelector('.item-price').value,
+                    });
+                });
+                var user_email = document.getElementById('quote-user-email').value;
+                fetch(ajaxurl, {
+                    method: "POST",
+                    credentials: "same-origin",
+                    headers: {"Content-Type": "application/x-www-form-urlencoded"},
+                    body: "action=sandbaai_update_quote&quote_id=<?php echo $post->ID; ?>&user_email=" + encodeURIComponent(user_email) + "&items=" + encodeURIComponent(JSON.stringify(items))
+                }).then(r=>r.json()).then(data=>{
+                    if (data.success) alert('Quote saved.');
+                    else alert('Error: '+data.data);
+                });
+            });
+        })();
+        </script>
+        <?php
     }
 
     public function maybe_send_invoice() {
@@ -254,19 +344,37 @@ class HallBookingIntegration {
             $items = get_post_meta($quote_id, 'quote_items', true);
             $total = get_post_meta($quote_id, 'quote_total', true);
 
+            // HTML Email with styling
             $subject = "Sandbaai Hall Invoice/Quote";
-            $message = "Thank you for your booking enquiry. Here is your quote:\n\n";
+            $headers = array('Content-Type: text/html; charset=UTF-8');
+            $message = '
+                <div style="font-family:sans-serif;border:1px solid #eee;padding:24px;background:#f9f9f9;">
+                  <h2 style="color:#223366;margin-top:0;">Sandbaai Hall Management Committee</h2>
+                  <h3 style="margin-bottom:16px;">Invoice / Quote</h3>
+                  <table width="100%" style="border-collapse:collapse;margin-bottom:18px;">
+                    <thead>
+                      <tr style="background:#eef;"><th style="padding:6px 8px;">Category</th><th style="padding:6px 8px;">Item</th><th style="padding:6px 8px;">Qty</th><th style="padding:6px 8px;">Unit Price</th><th style="padding:6px 8px;">Subtotal</th></tr>
+                    </thead>
+                    <tbody>';
             foreach ($items as $item) {
-                $message .= "{$item['category']} - {$item['label']}: {$item['quantity']} x R " . number_format((float)$item['price'], 2);
-                $message .= " = R " . number_format((float)$item['subtotal'], 2) . "\n";
+                $message .= "<tr>
+                  <td style='padding:6px 8px;border:1px solid #eee;'>" . esc_html($item['category']) . "</td>
+                  <td style='padding:6px 8px;border:1px solid #eee;'>" . esc_html($item['label']) . "</td>
+                  <td style='padding:6px 8px;border:1px solid #eee;text-align:center;'>" . esc_html($item['quantity']) . "</td>
+                  <td style='padding:6px 8px;border:1px solid #eee;'>R " . number_format((float)$item['price'], 2) . "</td>
+                  <td style='padding:6px 8px;border:1px solid #eee;'>R " . number_format((float)$item['subtotal'], 2) . "</td>
+                </tr>";
             }
-            $message .= "\nTotal: R " . number_format((float)$total, 2) . "\n";
-            $message .= "\nPlease reply to confirm your booking or if you have any questions.";
-
-            wp_mail($user_email, $subject, $message);
-
+            $message .= '</tbody></table>
+                  <h4 style="margin-top:1em;">Total: R ' . number_format((float)$total, 2) . '</h4>
+                  <p style="margin-top:2em;">Thank you for your booking enquiry.<br>
+                  Please reply to confirm your booking or if you have any questions.</p>
+                  <div style="margin-top:2em;font-size:.95em;color:#555;">
+                  <em>This is a computer-generated invoice/quote from Sandbaai Hall. For queries contact our management committee.</em>
+                  </div>
+                </div>';
+            wp_mail($user_email, $subject, $message, $headers);
             update_post_meta($quote_id, 'invoice_sent', 1);
-
             wp_redirect(admin_url('post.php?post=' . $quote_id . '&action=edit'));
             exit;
         }
@@ -280,6 +388,11 @@ class HallBookingIntegration {
         if (!$tariffs || !is_array($tariffs)) {
             return "<p>No tariff data available.</p>";
         }
+        // Determine which items have no quantity option
+        $no_quantity_items = [
+            'SPOTLIGHTS & SOUND' => ['Wi Fi'],
+            'KITCHEN HIRE' => ['Per event, including use of oven, stove fridges', 'Per event, for serving only'],
+        ];
         ob_start();
         ?>
         <form id="sandbaai-quote-form">
@@ -288,18 +401,37 @@ class HallBookingIntegration {
                 <h2><?php echo esc_html($category); ?></h2>
                 <table style="width:100%;margin-bottom:2em;">
                 <?php foreach ($items as $label => $price): ?>
+                    <?php
+                        // Special logic for deposit
+                        $is_deposit = ($category === 'HALL HIRE RATE' && $label === 'Refundable deposit at time of booking');
+                        $no_quantity = $this->is_no_quantity_item($category, $label);
+                    ?>
                     <tr>
                         <td>
                             <label>
-                                <input type="checkbox" name="selected[<?php echo esc_attr($category); ?>][<?php echo esc_attr($label); ?>]" 
-                                value="1" class="quote-item" data-price="<?php echo esc_attr($price); ?>" />
+                                <input type="checkbox"
+                                    name="selected[<?php echo esc_attr($category); ?>][<?php echo esc_attr($label); ?>]"
+                                    value="1"
+                                    class="quote-item"
+                                    data-category="<?php echo esc_attr($category); ?>"
+                                    data-label="<?php echo esc_attr($label); ?>"
+                                    <?php if ($is_deposit): ?> checked disabled <?php endif; ?>
+                                />
                                 <?php echo esc_html($label); ?>
                             </label>
                         </td>
+                        <!-- Show quantity input unless deposit or no_quantity -->
+                        <?php if ($is_deposit || $no_quantity): ?>
                         <td style="width:20%;">
-                            <input type="number" name="quantity[<?php echo esc_attr($category); ?>][<?php echo esc_attr($label); ?>]" 
-                            value="1" min="1" style="width:60px;" disabled />
+                            <input type="number" value="1" min="1" style="width:60px;background:#eee;" readonly />
                         </td>
+                        <?php else: ?>
+                        <td style="width:20%;">
+                            <input type="number"
+                                name="quantity[<?php echo esc_attr($category); ?>][<?php echo esc_attr($label); ?>]"
+                                value="1" min="1" style="width:60px;" disabled />
+                        </td>
+                        <?php endif; ?>
                         <td style="width:20%;text-align:right;">
                             R <?php echo number_format((float)$price, 2); ?>
                         </td>
@@ -312,7 +444,7 @@ class HallBookingIntegration {
                 <strong>Total: <span id="quote-total">R 0.00</span></strong>
             </div>
             <div style="margin-top:1em;">
-                <input type="text" name="user_email" placeholder="Your email address" required style="width:300px;">
+                <input type="email" name="user_email" placeholder="Your email address" required style="width:300px;">
             </div>
             <div style="margin-top:1em;">
                 <button type="submit" class="button button-primary">Generate Quote</button>
@@ -321,10 +453,28 @@ class HallBookingIntegration {
         </form>
         <div id="quote-response"></div>
         <script>
+        // JS: Deposit auto-check, quantity enable/disable, no quantity for some items
+        function updateDepositCheckbox() {
+            var hallHireChecks = Array.from(document.querySelectorAll('.quote-item[data-category="HALL HIRE RATE"]:not([data-label="Refundable deposit at time of booking"])'));
+            var anyChecked = hallHireChecks.some(c => c.checked);
+            var deposit = document.querySelector('.quote-item[data-label="Refundable deposit at time of booking"]');
+            if (deposit) {
+                deposit.checked = anyChecked;
+                deposit.disabled = true;
+            }
+        }
         document.querySelectorAll('.quote-item').forEach(function(item){
+            var tr = item.closest('tr');
+            var qtyInput = tr ? tr.querySelector('input[type=number][name^="quantity"]') : null;
+            // Deposit or "no quantity" items: quantity always 1, don't enable.
+            var noQty = item.hasAttribute('disabled') || (
+                (item.dataset.category==="SPOTLIGHTS & SOUND" && item.dataset.label==="Wi Fi") ||
+                (item.dataset.category==="KITCHEN HIRE" && (item.dataset.label==="Per event, including use of oven, stove fridges" || item.dataset.label==="Per event, for serving only"))
+            );
+            if (qtyInput && noQty) qtyInput.value = 1;
             item.addEventListener('change', function(){
-                var qtyInput = this.closest('tr').querySelector('input[type=number]');
-                qtyInput.disabled = !this.checked;
+                if (qtyInput && !noQty) qtyInput.disabled = !this.checked;
+                updateDepositCheckbox();
                 calculateTotal();
             });
         });
@@ -334,15 +484,24 @@ class HallBookingIntegration {
         function calculateTotal() {
             var total = 0;
             document.querySelectorAll('.quote-item').forEach(function(item){
+                var tr = item.closest('tr');
+                var noQty = item.hasAttribute('disabled') || (
+                    (item.dataset.category==="SPOTLIGHTS & SOUND" && item.dataset.label==="Wi Fi") ||
+                    (item.dataset.category==="KITCHEN HIRE" && (item.dataset.label==="Per event, including use of oven, stove fridges" || item.dataset.label==="Per event, for serving only"))
+                );
                 if(item.checked) {
-                    var qty = parseInt(item.closest('tr').querySelector('input[type=number]').value) || 1;
-                    var price = parseFloat(item.getAttribute('data-price'));
+                    var price = parseFloat(tr.querySelector('[data-price]') ? tr.querySelector('[data-price]').getAttribute('data-price') : tr.querySelector('td[style*="text-align:right"]').textContent.replace(/[^0-9.]/g, ''));
+                    var qty = 1;
+                    if (!noQty && tr.querySelector('input[type=number][name^="quantity"]')) {
+                        qty = parseInt(tr.querySelector('input[type=number][name^="quantity"]').value) || 1;
+                    }
                     total += qty * price;
                 }
             });
             document.getElementById('quote-total').textContent = 'R ' + total.toFixed(2);
         }
         calculateTotal();
+        // Submit via AJAX
         document.getElementById('sandbaai-quote-form').addEventListener('submit', function(e){
             e.preventDefault();
             var formData = new FormData(this);
@@ -428,6 +587,31 @@ class HallBookingIntegration {
         return sanitize_text_field($field_data);
     }
 
+    // Given items array, check if item exists
+    private function item_exists($items, $category, $label) {
+        foreach ($items as $item) {
+            if ($item['category'] === $category && $item['label'] === $label) return true;
+        }
+        return false;
+    }
+
+    // Should deposit be included (any HALL HIRE RATE except deposit)
+    private function should_include_deposit($selected) {
+        if (empty($selected['HALL HIRE RATE'])) return false;
+        foreach ($selected['HALL HIRE RATE'] as $label => $val) {
+            if ($label !== 'Refundable deposit at time of booking' && $val) return true;
+        }
+        return false;
+    }
+
+    // Return true if item has no quantity option
+    private function is_no_quantity_item($category, $label) {
+        return
+            ($category === 'SPOTLIGHTS & SOUND' && $label === 'Wi Fi') ||
+            ($category === 'KITCHEN HIRE' && ($label === 'Per event, including use of oven, stove fridges' || $label === 'Per event, for serving only')) ||
+            ($category === 'HALL HIRE RATE' && $label === 'Refundable deposit at time of booking');
+    }
+
     //////////////////////
     // Invoice system
     //////////////////////
@@ -450,9 +634,6 @@ class HallBookingIntegration {
         ]);
     }
 
-    /**
-     * Create invoice linked to booking event
-     */
     public function create_invoice_for_booking($event_id, $contact_person, $email, $space, $event_date, $event_time, $guest_count) {
         $tariffs = get_option('hall_tariffs', [
             'Main Hall Full Day' => 1200,
@@ -624,6 +805,7 @@ class HallBookingIntegration {
 
     public function tariffs_page() {
         if (!current_user_can('manage_options')) return;
+        // Correct order: move "Meeting room : per hour" to just above deposit
         $default_tariffs = [
             'HALL HIRE RATE' => [
                 'Rate per day up to 24h00' => 2200.00,
@@ -631,7 +813,7 @@ class HallBookingIntegration {
                 'Rate per hour or part thereof for preparations' => 110.00,
                 'Rate per hour: for 1st hour' => 220.00,
                 'Rate per hour: after first hour – per hour' => 110.00,
-                'Meeting room : per hour' => 110.00,
+                'Meeting room : per hour' => 110.00, // moved
                 'Refundable deposit at time of booking' => 2000.00,
             ],
             'SPOTLIGHTS & SOUND' => [
