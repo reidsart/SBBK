@@ -395,27 +395,62 @@ class HallBookingIntegration {
         <?php
     }
 
-    public function tariffs_page() {
-        if (!current_user_can('manage_options')) return;
-        $tariffs = get_option('hall_tariffs', [
-            'Main Hall Full Day' => 1200,
-            'Main Hall Half Day' => 800,
-            'Meeting Room Full Day' => 600,
-            'Meeting Room Half Day' => 400
-        ]);
-        ?>
-        <div class="wrap">
-            <h1>Tariff Management</h1>
-            <form method="post" action="<?php echo admin_url('admin-post.php'); ?>">
-                <input type="hidden" name="action" value="hall_save_tariffs"/>
-                <?php foreach ($tariffs as $key => $value): ?>
-                    <label><?php echo esc_html($key); ?>: <input type="number" name="tariffs[<?php echo esc_attr($key); ?>]" value="<?php echo esc_attr($value); ?>" min="0"/></label><br/>
-                <?php endforeach; ?>
-                <input type="submit" value="Save Tariffs" class="button button-primary"/>
-            </form>
-        </div>
-        <?php
+public function tariffs_page() {
+    if (!current_user_can('manage_options')) return;
+
+    // Full 2025 tariff data structure
+    $default_tariffs = [
+        'Hall Hire Rate' => [
+            'Rate per day up to 24h00' => 2200.00,
+            'Rate per hour or part thereof after 24h00' => 220.00,
+            'Rate per hour or part thereof for preparations' => 110.00,
+            'Rate per hour: for 1st hour' => 220.00,
+            'Rate per hour: after first hour – per hour' => 110.00,
+            'Meeting room : per hour' => 110.00,
+            'Refundable deposit at time of booking' => 2000.00,
+        ],
+        // ...other categories...
+    ];
+
+    // Load tariffs from DB or use defaults
+    $tariffs = get_option('hall_tariffs', $default_tariffs);
+
+    // Handle POST
+    if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['tariffs'])) {
+        $new_tariffs = [];
+        foreach ($_POST['tariffs'] as $category => $items) {
+            foreach ($items as $label => $value) {
+                $new_tariffs[$category][$label] = floatval($value);
+            }
+        }
+        update_option('hall_tariffs', $new_tariffs);
+        $tariffs = $new_tariffs;
+        echo '<div class="notice notice-success"><p>Tariffs updated successfully!</p></div>';
     }
+
+    ?>
+    <div class="wrap">
+        <h1>Tariff Management</h1>
+        <form method="post">
+            <?php foreach ($tariffs as $category => $items): ?>
+                <h2><?php echo esc_html($category); ?></h2>
+                <table class="form-table">
+                <?php foreach ($items as $label => $value): ?>
+                    <tr>
+                        <th scope="row"><?php echo esc_html($label); ?></th>
+                        <td>
+                            <input type="number" step="0.01" min="0" name="tariffs[<?php echo esc_attr($category); ?>][<?php echo esc_attr($label); ?>]" value="<?php echo esc_attr($value); ?>" />
+                        </td>
+                    </tr>
+                <?php endforeach; ?>
+                </table>
+            <?php endforeach; ?>
+            <input type="submit" value="Save Tariffs" class="button button-primary"/>
+        </form>
+    </div>
+    <?php
+}
+
     public function save_tariffs() {
         if (!current_user_can('manage_options')) wp_die('No permissions');
         $tariffs = $_POST['tariffs'] ?? [];
