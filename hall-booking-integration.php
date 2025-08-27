@@ -97,15 +97,13 @@ class HallBookingIntegration {
 
             // Set location (robust for EM)
             if (class_exists('EM_Event')) {
-                $em_event = new EM_Event($event_id);
-                if ($location_id && get_post_status($location_id) == 'publish') {
+            $em_event = new EM_Event($event_id);
+            if ($location_id && get_post_status($location_id) == 'publish') {
                     $em_event->location_id = $location_id;
                     $em_event->location = new EM_Location($location_id);
                     $em_event->save();
                 }
             }
-            // (Optional, for compatibility)
-            update_post_meta($event_id, 'location_id', $location_id);
 
             // Booking meta
             update_post_meta($event_id, '_booking_contact_person', $contact_person);
