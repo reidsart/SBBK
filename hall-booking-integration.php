@@ -493,7 +493,8 @@ public function tariffs_page() {
                     <tr>
                         <th scope="row"><?php echo esc_html($label); ?></th>
                         <td>
-                            <input type="number" step="0.01" min="0" name="tariffs[<?php echo esc_attr($category); ?>][<?php echo esc_attr($label); ?>]" value="<?php echo esc_attr($value); ?>" />
+                           <input type="number" step="0.01" min="0" name="tariffs[<?php echo esc_attr($category); ?>][<?php echo esc_attr($label); ?>]" value="<?php echo esc_attr($value); ?>" />
+<span style="margin-left:10px;font-weight:bold;">R <?php echo number_format((float)$value, 2); ?></span>
                         </td>
                     </tr>
                 <?php endforeach; ?>
