@@ -17,6 +17,7 @@ class HallBookingIntegration {
         add_action('init', array($this, 'register_invoice_post_type'));
         add_action('admin_post_hall_save_tariffs', array($this, 'save_tariffs'));
         add_shortcode('sandbaai_hall_tariffs', array($this, 'display_tariffs_shortcode'));
+        add_shortcode('sandbaai_hall_quote_form', array($this, 'quote_form_shortcode'));
     }
 
     /**
@@ -538,7 +539,87 @@ public function display_tariffs_shortcode() {
     echo '</div>';
     return ob_get_clean();
 }
-    
+
+public function quote_form_shortcode() {
+    $tariffs = get_option('hall_tariffs', []);
+    if (!$tariffs || !is_array($tariffs)) {
+        return "<p>No tariff data available.</p>";
+    }
+    ob_start();
+    ?>
+    <form id="sandbaai-quote-form">
+        <div class="sandbaai-hall-quote">
+        <?php foreach ($tariffs as $category => $items): ?>
+            <h2><?php echo esc_html($category); ?></h2>
+            <table style="width:100%;margin-bottom:2em;">
+            <?php foreach ($items as $label => $price): ?>
+                <tr>
+                    <td>
+                        <label>
+                            <input type="checkbox" name="selected[<?php echo esc_attr($category); ?>][<?php echo esc_attr($label); ?>]" 
+                            value="1" class="quote-item" data-price="<?php echo esc_attr($price); ?>" />
+                            <?php echo esc_html($label); ?>
+                        </label>
+                    </td>
+                    <td style="width:20%;">
+                        <input type="number" name="quantity[<?php echo esc_attr($category); ?>][<?php echo esc_attr($label); ?>]" 
+                        value="1" min="1" style="width:60px;" disabled />
+                    </td>
+                    <td style="width:20%;text-align:right;">
+                        R <?php echo number_format((float)$price, 2); ?>
+                    </td>
+                </tr>
+            <?php endforeach; ?>
+            </table>
+        <?php endforeach; ?>
+        <hr>
+        <div style="text-align:right;font-size:1.2em;">
+            <strong>Total: <span id="quote-total">R 0.00</span></strong>
+        </div>
+        <div style="margin-top:1em;">
+            <input type="text" name="user_email" placeholder="Your email address" required style="width:300px;">
+        </div>
+        <div style="margin-top:1em;">
+            <button type="submit" class="button button-primary">Generate Quote</button>
+        </div>
+        </div>
+    </form>
+    <div id="quote-response"></div>
+    <script>
+    // Simple live total calculation and quantity enable/disable
+    document.querySelectorAll('.quote-item').forEach(function(item){
+        item.addEventListener('change', function(){
+            var qtyInput = this.closest('tr').querySelector('input[type=number]');
+            qtyInput.disabled = !this.checked;
+            calculateTotal();
+        });
+    });
+    document.querySelectorAll('input[type=number][name^=quantity]').forEach(function(qty){
+        qty.addEventListener('input', calculateTotal);
+    });
+    function calculateTotal() {
+        var total = 0;
+        document.querySelectorAll('.quote-item').forEach(function(item){
+            if(item.checked) {
+                var qty = parseInt(item.closest('tr').querySelector('input[type=number]').value) || 1;
+                var price = parseFloat(item.getAttribute('data-price'));
+                total += qty * price;
+            }
+        });
+        document.getElementById('quote-total').textContent = 'R ' + total.toFixed(2);
+    }
+    calculateTotal();
+    // Submit via AJAX (pseudo, you need to handle backend)
+    document.getElementById('sandbaai-quote-form').addEventListener('submit', function(e){
+        e.preventDefault();
+        var formData = new FormData(this);
+        document.getElementById('quote-response').textContent = "Draft quote generated! (Demo only: backend processing required)";
+        // TODO: AJAX submit to backend to save draft invoice and notify admin
+    });
+    </script>
+    <?php
+    return ob_get_clean();
+}
     //////////////////////
     // Booking approval workflow
     //////////////////////
