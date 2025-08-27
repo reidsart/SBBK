@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Hall Booking Integration
  * Description: Converts Contact Form 7 booking submissions into Events Manager events
- * Version: 1.1
+ * Version: 1.2
  * Author: Christopher Reid
  */
 
@@ -38,7 +38,7 @@ class HallBookingIntegration {
         }
         
         $posted_data = $submission->get_posted_data();
-        
+
         // Extract and sanitize form data
         $contact_person = sanitize_text_field($posted_data['contact-person'] ?? '');
         $organization = sanitize_text_field($posted_data['organization'] ?? '');
@@ -49,19 +49,21 @@ class HallBookingIntegration {
         $event_time = sanitize_text_field($posted_data['event-time'] ?? '');
         $custom_hours = sanitize_text_field($posted_data['custom-hours'] ?? '');
         $guest_count = intval($posted_data['guest-count'] ?? 0);
-        $event_type = sanitize_text_field($posted_data['event-type'] ?? '');
+        $event_title = sanitize_text_field($posted_data['event-title'] ?? ''); // NEW FIELD
         $description = sanitize_textarea_field($posted_data['event-description'] ?? '');
         $setup_requirements = $this->format_array_field($posted_data['setup'] ?? []);
         $other_setup = sanitize_text_field($posted_data['other-setup'] ?? '');
         $catering = sanitize_text_field($posted_data['catering'] ?? '');
-        
-        // Create event title - use event type if provided, otherwise "Private Event"
-        $event_title = $event_type ?: 'Private Event';
-        $pending_title = "PENDING: {$event_title}";
-        
+        $event_privacy = sanitize_text_field($posted_data['event-privacy'] ?? 'private'); // NEW FIELD, expects 'private' or 'public'
+        $is_private = ($event_privacy === 'private');
+
+        // Set public-facing title
+        $public_title = $is_private ? 'Private Event' : ($event_title ?: 'Event');
+        $pending_title = "PENDING: {$public_title}";
+
         // Create public event description (what visitors see on calendar)
         $public_description = $description ?: 'Private event at Sandbaai Hall';
-        
+
         // Create admin notes (internal use only)
         $admin_notes = $this->build_admin_notes([
             'contact_person' => $contact_person,
@@ -113,11 +115,12 @@ class HallBookingIntegration {
             update_post_meta($event_id, '_booking_space', $space);
             update_post_meta($event_id, '_booking_guests', $guest_count);
             update_post_meta($event_id, '_booking_status', 'pending_payment');
-            update_post_meta($event_id, '_booking_event_type', $event_type);
-            update_post_meta($event_id, '_booking_is_private', 1); // Default to private
-            
+            update_post_meta($event_id, '_booking_event_title', $event_title);
+            update_post_meta($event_id, '_booking_is_private', $is_private ? 1 : 0);
+            update_post_meta($event_id, '_booking_event_description', $description);
+
             // Send notification email
-            $this->send_admin_notification($event_id, $contact_person, $space, $event_date, $event_type);
+            $this->send_admin_notification($event_id, $contact_person, $space, $event_date, $public_title);
         }
     }
     
@@ -223,7 +226,7 @@ class HallBookingIntegration {
     /**
      * Send admin notification email
      */
-    private function send_admin_notification($event_id, $contact_person, $space, $event_date, $event_type) {
+    private function send_admin_notification($event_id, $contact_person, $space, $event_date, $public_title) {
         $admin_email = get_option('admin_email');
         $edit_url = admin_url("post.php?post={$event_id}&action=edit");
         
@@ -234,7 +237,7 @@ class HallBookingIntegration {
         $message .= "Contact: {$contact_person}\n";
         $message .= "Space: {$space}\n";
         $message .= "Date: {$event_date}\n";
-        $message .= "Event: " . ($event_type ?: 'Private Event') . "\n\n";
+        $message .= "Event: {$public_title}\n\n";
         $message .= "⚡ QUICK APPROVAL:\n";
         $message .= "1. Verify payment received\n";
         $message .= "2. Click here to approve: {$edit_url}\n";
@@ -269,18 +272,13 @@ class HallBookingIntegration {
                 
                 // Check if this should be private or public
                 $is_private = get_post_meta($post_id, '_booking_is_private', true);
-                if ($is_private) {
-                    $clean_content = $public_description;
-                } else {
-                    $clean_content = $public_description;
-                    // Add contact info for public events if desired
-                    // $clean_content .= "\n\nContact: " . get_post_meta($post_id, '_booking_contact_person', true);
-                }
-                
-                // Update the post content
+                $public_title = $is_private ? 'Private Event' : (get_post_meta($post_id, '_booking_event_title', true) ?: $post->post_title);
+
+                // Update the post title to reflect privacy setting
                 wp_update_post([
                     'ID' => $post_id,
-                    'post_content' => $clean_content
+                    'post_title' => $public_title,
+                    'post_content' => $public_description
                 ]);
             }
         }
@@ -304,11 +302,23 @@ class HallBookingIntegration {
      * Plugin settings admin page
      */
     public function admin_page() {
+        // Save settings
         if (isset($_POST['submit'])) {
             update_option('hall_booking_form_id', sanitize_text_field($_POST['form_id']));
             update_option('hall_booking_main_hall_location', intval($_POST['main_hall_location']));
             update_option('hall_booking_meeting_room_location', intval($_POST['meeting_room_location']));
             echo '<div class="notice notice-success"><p>Settings saved!</p></div>';
+        }
+
+        // Handle delete booking action
+        if (isset($_POST['delete_booking_id'])) {
+            $booking_id = intval($_POST['delete_booking_id']);
+            if (current_user_can('delete_post', $booking_id)) {
+                wp_trash_post($booking_id);
+                echo '<div class="notice notice-success"><p>Booking deleted!</p></div>';
+            } else {
+                echo '<div class="notice notice-error"><p>Failed to delete booking. Permission denied.</p></div>';
+            }
         }
         
         $form_id = get_option('hall_booking_form_id', 0);
@@ -373,7 +383,7 @@ class HallBookingIntegration {
             <h2>Instructions</h2>
             <ol>
                 <li>Select your booking form above</li>
-                <li>Make sure your form field names match: contact-person, your-email, phone, space, event-date, event-time, etc.</li>
+                <li>Make sure your form field names match: contact-person, your-email, phone, space, event-date, event-time, event-title, event-privacy, etc.</li>
                 <li>Create locations for your Main Hall and Meeting Room in Events Manager</li>
                 <li>Select those locations above</li>
                 <li>Test by submitting your booking form</li>
@@ -400,7 +410,13 @@ class HallBookingIntegration {
                     echo '<td>' . esc_html($contact) . '</td>';
                     echo '<td>' . esc_html($date) . '</td>';
                     echo '<td>' . ($booking->post_status === 'pending' ? 'Pending' : 'Approved') . '</td>';
-                    echo '<td><a href="' . esc_url($edit_link) . '">Edit</a></td>';
+                    echo '<td>
+                        <a href="' . esc_url($edit_link) . '">Edit</a>
+                        | <form method="post" style="display:inline;" onsubmit="return confirm(\'Are you sure you want to delete this booking?\');">
+                            <input type="hidden" name="delete_booking_id" value="' . esc_attr($booking->ID) . '"/>
+                            <input type="submit" value="Delete" class="button-link-delete"/>
+                        </form>
+                    </td>';
                     echo '</tr>';
                 }
                 echo '</tbody></table>';
@@ -438,13 +454,15 @@ class HallBookingIntegration {
             $phone = get_post_meta($post->ID, '_booking_phone', true);
             $space = get_post_meta($post->ID, '_booking_space', true);
             $is_private = get_post_meta($post->ID, '_booking_is_private', true);
-            
+            $event_title = get_post_meta($post->ID, '_booking_event_title', true);
+
             echo '<div style="background: #fff3cd; padding: 10px; border-radius: 5px; margin-bottom: 15px;">';
             echo '<strong>📋 Booking Summary:</strong><br>';
             echo "Contact: {$contact_person}<br>";
             echo "Email: <a href='mailto:{$email}'>{$email}</a><br>";
             echo "Phone: <a href='tel:{$phone}'>{$phone}</a><br>";
-            echo "Space: {$space}";
+            echo "Space: {$space}<br>";
+            echo "Original Title: " . esc_html($event_title) . "<br>";
             echo '</div>';
             
             echo '<div style="background: #f8d7da; padding: 10px; border-radius: 5px; margin-bottom: 15px;">';
