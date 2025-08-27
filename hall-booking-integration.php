@@ -399,7 +399,6 @@ class HallBookingIntegration {
                     <?php
                         $is_deposit = ($category === 'HALL HIRE RATE' && $label === 'Refundable deposit at time of booking');
                         $no_quantity = $this->is_no_quantity_item($category, $label);
-                        // For mutual exclusion:
                         $is_kitchen_main = ($category === 'KITCHEN HIRE' && $label === 'Per event, including use of oven, stove fridges');
                         $is_kitchen_serving = ($category === 'KITCHEN HIRE' && $label === 'Per event, for serving only');
                     ?>
@@ -412,15 +411,15 @@ class HallBookingIntegration {
                                     class="quote-item"
                                     data-category="<?php echo esc_attr($category); ?>"
                                     data-label="<?php echo esc_attr($label); ?>"
-                                    <?php if ($is_deposit): ?> checked disabled <?php endif; ?>
                                     <?php if ($is_kitchen_main): ?> data-kitchen="main" <?php endif; ?>
                                     <?php if ($is_kitchen_serving): ?> data-kitchen="serving" <?php endif; ?>
+                                    <?php if ($is_deposit): ?> data-deposit="1" <?php endif; ?>
                                 />
                                 <?php echo esc_html($label); ?>
                             </label>
                         </td>
                         <?php if ($is_deposit): ?>
-                            <td style="width:20%;text-align:center;">1</td>
+                            <td style="width:20%;text-align:center;" class="quantity-cell">0</td>
                         <?php elseif ($no_quantity): ?>
                             <td style="width:20%;text-align:center;" class="quantity-cell">0</td>
                         <?php else: ?>
@@ -451,7 +450,7 @@ class HallBookingIntegration {
         </form>
         <div id="quote-response"></div>
         <script>
-        // Mutual exclusion logic for kitchen hire:
+        // Mutual exclusion for kitchen hire
         function updateKitchenMutualExclusion() {
             var main = document.querySelector('.quote-item[data-kitchen="main"]');
             var serving = document.querySelector('.quote-item[data-kitchen="serving"]');
@@ -470,24 +469,26 @@ class HallBookingIntegration {
                 }
             }
         }
-        // Deposit auto-check
+        // Deposit auto-check: only check if any booking option selected, otherwise unchecked
         function updateDepositCheckbox() {
             var hallHireChecks = Array.from(document.querySelectorAll('.quote-item[data-category="HALL HIRE RATE"]:not([data-label="Refundable deposit at time of booking"])'));
             var anyChecked = hallHireChecks.some(c => c.checked);
-            var deposit = document.querySelector('.quote-item[data-label="Refundable deposit at time of booking"]');
+            var deposit = document.querySelector('.quote-item[data-deposit="1"]');
             if (deposit) {
                 deposit.checked = anyChecked;
                 deposit.disabled = true;
+                // Update visible quantity cell
+                var cell = deposit.closest('tr').querySelector('.quantity-cell');
+                if (cell) cell.textContent = deposit.checked ? "1" : "0";
             }
         }
         // Quantity/text logic for no_quantity items
         function updateNoQuantityDisplay() {
             document.querySelectorAll('.quote-item').forEach(function(item){
                 var tr = item.closest('tr');
-                var noQty = item.hasAttribute('disabled') || (
+                var noQty = item.hasAttribute('data-deposit') ||
                     (item.dataset.category==="SPOTLIGHTS & SOUND" && item.dataset.label==="Wi Fi") ||
-                    (item.dataset.category==="KITCHEN HIRE" && (item.dataset.label==="Per event, including use of oven, stove fridges" || item.dataset.label==="Per event, for serving only"))
-                );
+                    (item.dataset.category==="KITCHEN HIRE" && (item.dataset.label==="Per event, including use of oven, stove fridges" || item.dataset.label==="Per event, for serving only"));
                 if (noQty && tr) {
                     var cell = tr.querySelector('.quantity-cell');
                     if (cell) cell.textContent = item.checked ? "1" : "0";
@@ -498,10 +499,9 @@ class HallBookingIntegration {
         document.querySelectorAll('.quote-item').forEach(function(item){
             var tr = item.closest('tr');
             var qtyInput = tr ? tr.querySelector('input[type=number][name^="quantity"]') : null;
-            var noQty = item.hasAttribute('disabled') || (
+            var noQty = item.hasAttribute('data-deposit') ||
                 (item.dataset.category==="SPOTLIGHTS & SOUND" && item.dataset.label==="Wi Fi") ||
-                (item.dataset.category==="KITCHEN HIRE" && (item.dataset.label==="Per event, including use of oven, stove fridges" || item.dataset.label==="Per event, for serving only"))
-            );
+                (item.dataset.category==="KITCHEN HIRE" && (item.dataset.label==="Per event, including use of oven, stove fridges" || item.dataset.label==="Per event, for serving only"));
             if (qtyInput && !noQty) qtyInput.disabled = true;
             item.addEventListener('change', function(){
                 if (qtyInput && !noQty) qtyInput.disabled = !this.checked;
@@ -519,10 +519,9 @@ class HallBookingIntegration {
             document.querySelectorAll('.quote-item').forEach(function(item){
                 var tr = item.closest('tr');
                 var price = parseFloat(tr.querySelector('td[style*="text-align:right"]').textContent.replace(/[^0-9.]/g, ''));
-                var noQty = item.hasAttribute('disabled') || (
+                var noQty = item.hasAttribute('data-deposit') ||
                     (item.dataset.category==="SPOTLIGHTS & SOUND" && item.dataset.label==="Wi Fi") ||
-                    (item.dataset.category==="KITCHEN HIRE" && (item.dataset.label==="Per event, including use of oven, stove fridges" || item.dataset.label==="Per event, for serving only"))
-                );
+                    (item.dataset.category==="KITCHEN HIRE" && (item.dataset.label==="Per event, including use of oven, stove fridges" || item.dataset.label==="Per event, for serving only"));
                 if(item.checked) {
                     var qty = 1;
                     if (!noQty && tr.querySelector('input[type=number][name^="quantity"]')) {
@@ -535,6 +534,7 @@ class HallBookingIntegration {
         }
         // Initial setup:
         updateKitchenMutualExclusion();
+        updateDepositCheckbox();
         updateNoQuantityDisplay();
         calculateTotal();
         // Submit via AJAX
