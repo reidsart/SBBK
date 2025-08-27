@@ -388,11 +388,6 @@ class HallBookingIntegration {
         if (!$tariffs || !is_array($tariffs)) {
             return "<p>No tariff data available.</p>";
         }
-        // Determine which items have no quantity option
-        $no_quantity_items = [
-            'SPOTLIGHTS & SOUND' => ['Wi Fi'],
-            'KITCHEN HIRE' => ['Per event, including use of oven, stove fridges', 'Per event, for serving only'],
-        ];
         ob_start();
         ?>
         <form id="sandbaai-quote-form">
@@ -402,9 +397,11 @@ class HallBookingIntegration {
                 <table style="width:100%;margin-bottom:2em;">
                 <?php foreach ($items as $label => $price): ?>
                     <?php
-                        // Special logic for deposit
                         $is_deposit = ($category === 'HALL HIRE RATE' && $label === 'Refundable deposit at time of booking');
                         $no_quantity = $this->is_no_quantity_item($category, $label);
+                        // For mutual exclusion:
+                        $is_kitchen_main = ($category === 'KITCHEN HIRE' && $label === 'Per event, including use of oven, stove fridges');
+                        $is_kitchen_serving = ($category === 'KITCHEN HIRE' && $label === 'Per event, for serving only');
                     ?>
                     <tr>
                         <td>
@@ -416,21 +413,22 @@ class HallBookingIntegration {
                                     data-category="<?php echo esc_attr($category); ?>"
                                     data-label="<?php echo esc_attr($label); ?>"
                                     <?php if ($is_deposit): ?> checked disabled <?php endif; ?>
+                                    <?php if ($is_kitchen_main): ?> data-kitchen="main" <?php endif; ?>
+                                    <?php if ($is_kitchen_serving): ?> data-kitchen="serving" <?php endif; ?>
                                 />
                                 <?php echo esc_html($label); ?>
                             </label>
                         </td>
-                        <!-- Show quantity input unless deposit or no_quantity -->
-                        <?php if ($is_deposit || $no_quantity): ?>
-                        <td style="width:20%;">
-                            <input type="number" value="1" min="1" style="width:60px;background:#eee;" readonly />
-                        </td>
+                        <?php if ($is_deposit): ?>
+                            <td style="width:20%;text-align:center;">1</td>
+                        <?php elseif ($no_quantity): ?>
+                            <td style="width:20%;text-align:center;" class="quantity-cell">0</td>
                         <?php else: ?>
-                        <td style="width:20%;">
-                            <input type="number"
-                                name="quantity[<?php echo esc_attr($category); ?>][<?php echo esc_attr($label); ?>]"
-                                value="1" min="1" style="width:60px;" disabled />
-                        </td>
+                            <td style="width:20%;">
+                                <input type="number"
+                                    name="quantity[<?php echo esc_attr($category); ?>][<?php echo esc_attr($label); ?>]"
+                                    value="1" min="1" style="width:60px;" disabled />
+                            </td>
                         <?php endif; ?>
                         <td style="width:20%;text-align:right;">
                             R <?php echo number_format((float)$price, 2); ?>
@@ -453,7 +451,26 @@ class HallBookingIntegration {
         </form>
         <div id="quote-response"></div>
         <script>
-        // JS: Deposit auto-check, quantity enable/disable, no quantity for some items
+        // Mutual exclusion logic for kitchen hire:
+        function updateKitchenMutualExclusion() {
+            var main = document.querySelector('.quote-item[data-kitchen="main"]');
+            var serving = document.querySelector('.quote-item[data-kitchen="serving"]');
+            if (main && serving) {
+                if (main.checked) {
+                    serving.disabled = true;
+                    serving.closest('tr').style.opacity = 0.5;
+                } else if (serving.checked) {
+                    main.disabled = true;
+                    main.closest('tr').style.opacity = 0.5;
+                } else {
+                    main.disabled = false;
+                    serving.disabled = false;
+                    main.closest('tr').style.opacity = 1;
+                    serving.closest('tr').style.opacity = 1;
+                }
+            }
+        }
+        // Deposit auto-check
         function updateDepositCheckbox() {
             var hallHireChecks = Array.from(document.querySelectorAll('.quote-item[data-category="HALL HIRE RATE"]:not([data-label="Refundable deposit at time of booking"])'));
             var anyChecked = hallHireChecks.some(c => c.checked);
@@ -463,18 +480,34 @@ class HallBookingIntegration {
                 deposit.disabled = true;
             }
         }
+        // Quantity/text logic for no_quantity items
+        function updateNoQuantityDisplay() {
+            document.querySelectorAll('.quote-item').forEach(function(item){
+                var tr = item.closest('tr');
+                var noQty = item.hasAttribute('disabled') || (
+                    (item.dataset.category==="SPOTLIGHTS & SOUND" && item.dataset.label==="Wi Fi") ||
+                    (item.dataset.category==="KITCHEN HIRE" && (item.dataset.label==="Per event, including use of oven, stove fridges" || item.dataset.label==="Per event, for serving only"))
+                );
+                if (noQty && tr) {
+                    var cell = tr.querySelector('.quantity-cell');
+                    if (cell) cell.textContent = item.checked ? "1" : "0";
+                }
+            });
+        }
+
         document.querySelectorAll('.quote-item').forEach(function(item){
             var tr = item.closest('tr');
             var qtyInput = tr ? tr.querySelector('input[type=number][name^="quantity"]') : null;
-            // Deposit or "no quantity" items: quantity always 1, don't enable.
             var noQty = item.hasAttribute('disabled') || (
                 (item.dataset.category==="SPOTLIGHTS & SOUND" && item.dataset.label==="Wi Fi") ||
                 (item.dataset.category==="KITCHEN HIRE" && (item.dataset.label==="Per event, including use of oven, stove fridges" || item.dataset.label==="Per event, for serving only"))
             );
-            if (qtyInput && noQty) qtyInput.value = 1;
+            if (qtyInput && !noQty) qtyInput.disabled = true;
             item.addEventListener('change', function(){
                 if (qtyInput && !noQty) qtyInput.disabled = !this.checked;
+                updateKitchenMutualExclusion();
                 updateDepositCheckbox();
+                updateNoQuantityDisplay();
                 calculateTotal();
             });
         });
@@ -485,12 +518,12 @@ class HallBookingIntegration {
             var total = 0;
             document.querySelectorAll('.quote-item').forEach(function(item){
                 var tr = item.closest('tr');
+                var price = parseFloat(tr.querySelector('td[style*="text-align:right"]').textContent.replace(/[^0-9.]/g, ''));
                 var noQty = item.hasAttribute('disabled') || (
                     (item.dataset.category==="SPOTLIGHTS & SOUND" && item.dataset.label==="Wi Fi") ||
                     (item.dataset.category==="KITCHEN HIRE" && (item.dataset.label==="Per event, including use of oven, stove fridges" || item.dataset.label==="Per event, for serving only"))
                 );
                 if(item.checked) {
-                    var price = parseFloat(tr.querySelector('[data-price]') ? tr.querySelector('[data-price]').getAttribute('data-price') : tr.querySelector('td[style*="text-align:right"]').textContent.replace(/[^0-9.]/g, ''));
                     var qty = 1;
                     if (!noQty && tr.querySelector('input[type=number][name^="quantity"]')) {
                         qty = parseInt(tr.querySelector('input[type=number][name^="quantity"]').value) || 1;
@@ -500,6 +533,9 @@ class HallBookingIntegration {
             });
             document.getElementById('quote-total').textContent = 'R ' + total.toFixed(2);
         }
+        // Initial setup:
+        updateKitchenMutualExclusion();
+        updateNoQuantityDisplay();
         calculateTotal();
         // Submit via AJAX
         document.getElementById('sandbaai-quote-form').addEventListener('submit', function(e){
