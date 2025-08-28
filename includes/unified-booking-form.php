@@ -25,6 +25,18 @@ add_shortcode('unified_hall_booking_form', function() {
 <form id="hall-booking-quote-form" method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>">
     <h3>Contact Information</h3>
     <div style="display:flex; gap:24px;">
+        <div style="flex:2;">
+            <label>Event Title*</label>
+            <input type="text" name="event_title" required style="width:100%;">
+        </div>
+        <div style="flex:1; display:flex; align-items:center; gap:8px;">
+            <input type="checkbox" name="event_privacy" id="event_privacy" value="private" style="margin-top:0;">
+            <label for="event_privacy" style="margin-bottom:0;">Private Event</label>
+        </div>
+    </div>
+        <label>Event Description</label>
+    <textarea name="event_description" style="width:100%;"></textarea>
+    <div style="display:flex; gap:24px;">
         <div style="flex:1;">
             <label>Preferred Space*</label>
             <select name="space" id="space" required style="width:100%;">
@@ -77,19 +89,6 @@ add_shortcode('unified_hall_booking_form', function() {
         </div>
     </div>
     <div style="height:12px;"></div>
-    <div style="display:flex; gap:24px;">
-        <div style="flex:2;">
-            <label>Event Title*</label>
-            <input type="text" name="event_title" required style="width:100%;">
-        </div>
-        <div style="flex:1; display:flex; align-items:center; gap:8px;">
-            <input type="checkbox" name="event_privacy" id="event_privacy" value="private" style="margin-top:0;">
-            <label for="event_privacy" style="margin-bottom:0;">Private Event</label>
-        </div>
-    </div>
-    <div style="height:12px;"></div>
-    <label>Event Description</label>
-    <textarea name="event_description" style="width:100%;"></textarea>
 
     <h3>Quote & Tariff Selection</h3>
     <table style="width:100%; border-collapse:collapse;">
@@ -159,7 +158,7 @@ add_shortcode('unified_hall_booking_form', function() {
                 <input type="number"
                     name="quantity[<?php echo esc_attr($deposit_row['category']); ?>][<?php echo esc_attr($deposit_row['label']); ?>]"
                     id="deposit-qty"
-                    value="0" min="0" max="1" style="width:80px; text-align:center;" readonly>
+                    value="0" min="0" max="1" style="width:80px; text-align:center; background:#eee;" readonly tabindex="-1" onkeydown="return false;">
             </td>
             <td>R <?php echo number_format((float)$deposit_row['price'],2); ?></td>
         </tr>
@@ -171,7 +170,7 @@ add_shortcode('unified_hall_booking_form', function() {
                 <input type="number"
                     name="quantity[<?php echo esc_attr($crockery_row['category']); ?>][<?php echo esc_attr($crockery_row['label']); ?>]"
                     id="crockery-qty"
-                    value="0" min="0" max="1" style="width:80px; text-align:center;" readonly>
+                    value="0" min="0" max="1" style="width:80px; text-align:center; background:#eee;" readonly tabindex="-1" onkeydown="return false;">
             </td>
             <td>R <?php echo number_format((float)$crockery_row['price'],2); ?></td>
         </tr>
