@@ -1009,7 +1009,8 @@ class HallBookingIntegration {
         <div class="wrap">
             <h1>Sandbaai Hall Tariff Management (2025)</h1>
             <form method="post">
-                <?php foreach ($tariffs as $category => $items): ?>
+                <?php wp_nonce_field('hall_save_tariffs', 'hall_save_tariffs_nonce');
+                php foreach ($tariffs as $category => $items): ?>
                     <h2 style="margin-top:2em;"><?php echo esc_html($category); ?></h2>
                     <table class="form-table">
                     <?php foreach ($items as $label => $value): ?>
