@@ -8,6 +8,9 @@
 
 if (!defined('ABSPATH')) exit;
 
+require_once __DIR__ . '/includes/unified-booking-form.php';
+require_once __DIR__ . '/includes/unified-booking-form-handler.php';
+
 class HallBookingIntegration {
     public function __construct() {
 
@@ -929,8 +932,6 @@ class HallBookingIntegration {
         $default_tariffs = [
             'HALL HIRE RATE' => [
                 'Rate per day up to 24h00' => 2200.00,
-                'Rate per hour or part thereof after 24h00' => 220.00,
-                'Rate per hour or part thereof for preparations' => 110.00,
                 'Rate per hour: for 1st hour' => 220.00,
                 'Rate per hour: after first hour – per hour' => 110.00,
                 'Meeting room : per hour' => 110.00, // moved
