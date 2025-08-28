@@ -2,23 +2,29 @@
 add_shortcode('unified_hall_booking_form', function() {
     $tariffs = get_option('hall_tariffs', []);
 
-    // Normalize tariff labels and remove unwanted rates
-    $main_hall_day_label = "Main Hall Rate per day (up to 24h00)";
-    $main_hall_deposit_label = "Main Hall refundable deposit";
-    $main_hall_hour_first_label = "Rate per hour: for 1st hour";
-    $main_hall_hour_after_label = "Rate per hour: after 1st hour";
-    $crockery_deposit_label = "Refundable deposit for crockery, cutlery, & glassware";
-    $wifi_label = "Wi Fi";
+    // ---- DEPOSIT PRICES ----
+    $main_hall_deposit_price = null;
+    $crockery_deposit_price = null;
 
-    // Rename keys and remove unwanted
-    if (isset($tariffs["Hall Hire Rates"]["Rate per day up to 24h00"])) {
-        $tariffs["Hall Hire Rates"][$main_hall_day_label] = $tariffs["Hall Hire Rates"]["Rate per day up to 24h00"];
-        unset($tariffs["Hall Hire Rates"]["Rate per day up to 24h00"]);
+    // Find and remove deposits from tariffs for clean display
+    foreach ($tariffs as $cat => &$items) {
+        foreach ($items as $label => $price) {
+            if (stripos($label, 'deposit') !== false) {
+                if (stripos($label, 'main hall') !== false) {
+                    $main_hall_deposit_price = $price;
+                    unset($items[$label]);
+                } elseif (stripos($label, 'crockery') !== false) {
+                    $crockery_deposit_price = $price;
+                    unset($items[$label]);
+                }
+            }
+        }
     }
-    if (isset($tariffs["Hall Hire Rates"]["Refundable deposit at time of booking"])) {
-        $tariffs["Hall Hire Rates"][$main_hall_deposit_label] = $tariffs["Hall Hire Rates"]["Refundable deposit at time of booking"];
-        unset($tariffs["Hall Hire Rates"]["Refundable deposit at time of booking"]);
-    }
+    unset($items); // break reference
+
+    // Set sensible defaults if not found
+    if ($main_hall_deposit_price === null) $main_hall_deposit_price = 2000;
+    if ($crockery_deposit_price === null) $crockery_deposit_price = 500;
 
     ob_start();
 ?>
@@ -34,7 +40,7 @@ add_shortcode('unified_hall_booking_form', function() {
             <label for="event_privacy" style="margin-bottom:0;">Private Event</label>
         </div>
     </div>
-        <label>Event Description</label>
+    <label>Event Description</label>
     <textarea name="event_description" style="width:100%;"></textarea>
     <div style="display:flex; gap:24px;">
         <div style="flex:1;">
@@ -92,14 +98,9 @@ add_shortcode('unified_hall_booking_form', function() {
 
     <h3>Quote & Tariff Selection</h3>
     <table style="width:100%; border-collapse:collapse;">
-    <?php
-    // --- Deposit row info for later ---
-    $deposit_row = null; $crockery_row = null;
-    foreach ($tariffs as $category => $items): ?>
+    <?php foreach ($tariffs as $category => $items): ?>
         <tr><th colspan="3" style="background:#f4f4f4;"><?php echo esc_html($category); ?></th></tr>
         <?php foreach ($items as $label => $price):
-            if ($label === $main_hall_deposit_label) { $deposit_row = ['category'=>$category, 'label'=>$label, 'price'=>$price]; continue; }
-            if ($label === $crockery_deposit_label) { $crockery_row = ['category'=>$category, 'label'=>$label, 'price'=>$price]; continue; }
             $is_wifi = ($label === $wifi_label);
             $is_spotlight_sound = (strtolower($category) == "spotlights & sound");
             $is_kitchen = (strtolower($category) == "kitchen hire");
@@ -114,15 +115,10 @@ add_shortcode('unified_hall_booking_form', function() {
             <tr class="tariff-row"
                 data-category="<?php echo esc_attr($category); ?>"
                 data-label="<?php echo esc_attr($label); ?>"
-                data-hall-day="<?php echo $is_hall_day ? '1' : '0'; ?>"
-                data-hall-hour-first="<?php echo $is_hall_hour_first ? '1' : '0'; ?>"
-                data-hall-hour-after="<?php echo $is_hall_hour_after ? '1' : '0'; ?>"
             >
                 <td>
                     <label>
                         <input type="checkbox"
-                            name="tariff[<?php echo esc_attr($category); ?>][<?php echo esc_attr($label); ?>]"
-                            value="1"
                             class="tariff-item"
                             data-price="<?php echo esc_attr($price); ?>"
                             data-category="<?php echo esc_attr($category); ?>"
@@ -136,14 +132,12 @@ add_shortcode('unified_hall_booking_form', function() {
                         <span class="static-qty-display">0</span>
                     <?php else: ?>
                         <input type="number"
-                            name="quantity[<?php echo esc_attr($category); ?>][<?php echo esc_attr($label); ?>]"
                             value="0" min="0" max="999"
                             style="width:80px; text-align:center;"
                             <?php echo $qty_readonly ? 'readonly' : ''; ?>
                             class="tariff-qty <?php
                                 echo $is_crockery || $is_cutlery || $is_glassware ? 'crockery-qty' : '';
                             ?>"
-                            data-readonly="<?php echo $qty_readonly ? '1' : '0'; ?>"
                         >
                     <?php endif; ?>
                 </td>
@@ -151,37 +145,17 @@ add_shortcode('unified_hall_booking_form', function() {
             </tr>
         <?php endforeach; ?>
     <?php endforeach; ?>
-    <?php if ($deposit_row): ?>
-        <tr>
-            <td><?php echo esc_html($deposit_row['label']); ?></td>
-            <td>
-                <input type="number"
-                    name="quantity[<?php echo esc_attr($deposit_row['category']); ?>][<?php echo esc_attr($deposit_row['label']); ?>]"
-                    id="deposit-qty"
-                    value="0" min="0" max="1" style="width:80px; text-align:center; background:#eee;" readonly tabindex="-1" onkeydown="return false;">
-            </td>
-            <td>R <?php echo number_format((float)$deposit_row['price'],2); ?></td>
-        </tr>
-    <?php endif; ?>
-    <?php if ($crockery_row): ?>
-        <tr>
-            <td><?php echo esc_html($crockery_row['label']); ?></td>
-            <td>
-                <input type="number"
-                    name="quantity[<?php echo esc_attr($crockery_row['category']); ?>][<?php echo esc_attr($crockery_row['label']); ?>]"
-                    id="crockery-qty"
-                    value="0" min="0" max="1" style="width:80px; text-align:center; background:#eee;" readonly tabindex="-1" onkeydown="return false;">
-            </td>
-            <td>R <?php echo number_format((float)$crockery_row['price'],2); ?></td>
-        </tr>
-    <?php endif; ?>
     </table>
+    <!-- Deposit summary area (JS will fill this in) -->
+    <div id="deposit-summary" style="margin-top:18px;"></div>
     <div style="text-align:right;font-size:1.2em;">
         <strong>Total: <span id="quote-total">R 0.00</span></strong>
     </div>
     <button type="submit" style="margin-top:20px;">Submit Booking Request</button>
 </form>
 <script>
+var mainHallDepositPrice = <?php echo json_encode($main_hall_deposit_price); ?>;
+var crockeryDepositPrice = <?php echo json_encode($crockery_deposit_price); ?>;
 function getDaysBetween(startDateStr, endDateStr) {
     var start = new Date(startDateStr);
     var end = new Date(endDateStr);
@@ -189,83 +163,67 @@ function getDaysBetween(startDateStr, endDateStr) {
     var diff = Math.floor((end - start) / (1000 * 60 * 60 * 24)) + 1;
     return diff > 0 ? diff : 1;
 }
-// Show/hide custom hours row
-document.getElementById('event_time').addEventListener('change', function(){
-    document.getElementById('custom-hours').style.display = (this.value === 'Custom') ? 'flex' : 'none';
-    autofillHallHireRates();
-    updateAll();
-});
-document.getElementById('space').addEventListener('change', function(){
-    autofillHallHireRates();
-    updateAll();
-});
-document.getElementById('event_start_date').addEventListener('change', function(){
-    autofillHallHireRates();
-    updateAll();
-});
-document.getElementById('event_end_date').addEventListener('change', function(){
-    autofillHallHireRates();
-    updateAll();
-});
-document.getElementById('custom_start').addEventListener('change', function(){
-    autofillHallHireRates();
-    updateAll();
-});
-document.getElementById('custom_end').addEventListener('change', function(){
-    autofillHallHireRates();
-    updateAll();
-});
-document.querySelectorAll('.tariff-item').forEach(function(el){
-    el.addEventListener('change', function(){
-        var row = el.closest('tr');
-        var qtyInput = row.querySelector('.tariff-qty');
-        var staticQty = row.querySelector('.static-qty-display');
-        var isCrockery = qtyInput && qtyInput.classList.contains('crockery-qty');
-        var isStatic = !!staticQty;
-        // If it's a static qty (spotlights, kitchen), show 1/0 and do not allow edit
-        if(isStatic) {
-            staticQty.textContent = el.checked ? "1" : "0";
-        }
-        // For normal items, set to 1 if checked, 0 if not (and enable/disable)
-        else if(qtyInput && !qtyInput.hasAttribute('readonly')) {
-            qtyInput.value = el.checked ? "1" : "0";
-            qtyInput.disabled = !el.checked;
-        }
-        // For crockery/cutlery/glassware, set to 1 if checked, 0 if not, but allow user to manually edit above 1 if desired
-        else if(isCrockery) {
-            if(el.checked && (!qtyInput.value || qtyInput.value == "0")) qtyInput.value = "1";
-            qtyInput.disabled = !el.checked;
-            if(!el.checked) qtyInput.value = "0";
-        }
-        updateAll();
-    });
-});
-document.querySelectorAll('.crockery-qty').forEach(function(inp){
-    inp.addEventListener('input', function() {
-        updateAll();
-    });
-});
 
-// --- Deposit logic ---
-function updateDeposits() {
+// --- Deposit calculation and display ---
+function getDepositState() {
+    // Main Hall deposit: 1 unless only Meeting Room selected
     var space = document.getElementById('space').value;
-    var mainHallDeposit = document.getElementById('deposit-qty');
-    if(mainHallDeposit) mainHallDeposit.value = (space == "Main Hall" || space == "Both Spaces") ? 1 : 0;
+    var hallDeposit = (space == "Main Hall" || space == "Both Spaces") ? 1 : 0;
 
-    // Crockery/cutlery/glassware deposit
+    // Crockery/cutlery/glassware deposit: 1 if any relevant item checked or qty>0, else 0
     var crockeryChecked = false;
     document.querySelectorAll('.tariff-item').forEach(function(el){
-        var cat = (el.getAttribute('data-category') || '').toLowerCase();
+        var row = el.closest('tr');
+        var cat = (row && row.getAttribute('data-category') || '').toLowerCase();
         if((cat === "crockery (each)" || cat === "glassware (each)" || cat === "cutlery (each)") && el.checked) crockeryChecked = true;
     });
     document.querySelectorAll('.crockery-qty').forEach(function(inp){
         if (parseInt(inp.value, 10) > 0) crockeryChecked = true;
     });
-    var crockeryDeposit = document.getElementById('crockery-qty');
-    if(crockeryDeposit) crockeryDeposit.value = crockeryChecked ? 1 : 0;
+    return {
+        hall: hallDeposit,
+        crockery: crockeryChecked ? 1 : 0
+    };
+}
+function updateDepositSummary() {
+    var dep = getDepositState();
+    var out = '';
+    if (dep.hall) {
+        out += '<div class="deposit-row" style="display:flex;justify-content:space-between;align-items:center;"><span>Main Hall refundable deposit</span><span>R ' + Number(mainHallDepositPrice).toFixed(2) + '</span></div>';
+    }
+    if (dep.crockery) {
+        out += '<div class="deposit-row" style="display:flex;justify-content:space-between;align-items:center;"><span>Refundable deposit for crockery, cutlery, & glassware</span><span>R ' + Number(crockeryDepositPrice).toFixed(2) + '</span></div>';
+    }
+    document.getElementById('deposit-summary').innerHTML = out;
 }
 
-// --- Total calculation ---
+// --- Tariff UI logic ---
+function updateTariffRows() {
+    document.querySelectorAll('.tariff-row').forEach(function(row){
+        var cb = row.querySelector('.tariff-item');
+        var qtyInput = row.querySelector('.tariff-qty');
+        var staticQty = row.querySelector('.static-qty-display');
+        var isCrockery = qtyInput && qtyInput.classList.contains('crockery-qty');
+        var isStatic = !!staticQty;
+        // For spotlights/kitchen, just static display
+        if (isStatic) {
+            staticQty.textContent = cb.checked ? "1" : "0";
+        }
+        // Normal items: qty=1 if checked, 0 if not
+        else if(qtyInput && !qtyInput.hasAttribute('readonly')) {
+            qtyInput.value = cb.checked ? "1" : "0";
+            qtyInput.disabled = !cb.checked;
+        }
+        // Crockery: like normal, but allow >1 if user sets it manually
+        else if (isCrockery) {
+            if(cb.checked && (!qtyInput.value || qtyInput.value == "0")) qtyInput.value = "1";
+            qtyInput.disabled = !cb.checked;
+            if(!cb.checked) qtyInput.value = "0";
+        }
+    });
+}
+
+// --- Total calculation, including deposit(s) ---
 function updateTotal() {
     var total = 0;
     document.querySelectorAll('.tariff-row').forEach(function(row){
@@ -278,31 +236,13 @@ function updateTotal() {
         else if(qtyInput && !qtyInput.disabled) qty = parseInt(qtyInput.value) || 0;
         total += price * qty;
     });
-    var depositQty = document.getElementById('deposit-qty');
-    var depositVal = depositQty ? parseInt(depositQty.value) : 0;
-    var depositPrice = <?php echo isset($deposit_row) ? floatval($deposit_row['price']) : 0; ?>;
-    total += depositVal * depositPrice;
-    var crockeryQty = document.getElementById('crockery-qty');
-    var crockeryVal = crockeryQty ? parseInt(crockeryQty.value) : 0;
-    var crockeryPrice = <?php echo isset($crockery_row) ? floatval($crockery_row['price']) : 0; ?>;
-    total += crockeryVal * crockeryPrice;
+    var dep = getDepositState();
+    if(dep.hall) total += Number(mainHallDepositPrice);
+    if(dep.crockery) total += Number(crockeryDepositPrice);
     document.getElementById('quote-total').textContent = 'R ' + total.toFixed(2);
 }
 
-// --- Enable/disable qty inputs for normal items (not static, not deposit) ---
-document.querySelectorAll('.tariff-qty').forEach(function(inp){
-    var row = inp.closest('tr');
-    var cb = row.querySelector('.tariff-item');
-    var staticQty = row.querySelector('.static-qty-display');
-    if (!cb || staticQty) return;
-    inp.disabled = !cb.checked;
-    cb.addEventListener('change', function(){
-        inp.disabled = !cb.checked;
-        if (!cb.checked) inp.value = 0;
-    });
-});
-
-// --- Autofill logic (no changes from your original for hall hire) ---
+// --- Autofill logic for Hall Hire (kept as before, but now always triggers total update) ---
 function autofillHallHireRates() {
     var space = document.getElementById('space').value;
     var time = document.getElementById('event_time').value;
@@ -376,14 +316,40 @@ function autofillHallHireRates() {
             }
         }
     }
-}
-// --- Call all update functions together
-function updateAll() {
-    updateDeposits();
+    updateTariffRows();
+    updateDepositSummary();
     updateTotal();
 }
+
+// --- Wire up all events and logic ---
+document.getElementById('event_time').addEventListener('change', function(){
+    document.getElementById('custom-hours').style.display = (this.value === 'Custom') ? 'flex' : 'none';
+    autofillHallHireRates();
+});
+document.getElementById('space').addEventListener('change', autofillHallHireRates);
+document.getElementById('event_start_date').addEventListener('change', autofillHallHireRates);
+document.getElementById('event_end_date').addEventListener('change', autofillHallHireRates);
+document.getElementById('custom_start').addEventListener('change', autofillHallHireRates);
+document.getElementById('custom_end').addEventListener('change', autofillHallHireRates);
+document.querySelectorAll('.tariff-item').forEach(function(cb){
+    cb.addEventListener('change', function(){
+        updateTariffRows();
+        updateDepositSummary();
+        updateTotal();
+    });
+});
+document.querySelectorAll('.crockery-qty').forEach(function(inp){
+    inp.addEventListener('input', function() {
+        updateDepositSummary();
+        updateTotal();
+    });
+});
+document.querySelectorAll('.tariff-qty').forEach(function(inp){
+    inp.addEventListener('input', updateTotal);
+});
+
+// Initial fill
 autofillHallHireRates();
-updateAll();
 </script>
 <style>
 #hall-booking-quote-form select,
@@ -398,6 +364,13 @@ updateAll();
 }
 #custom-hours label {
     margin-right: 4px;
+}
+.deposit-row {
+    border: 1px solid #eee;
+    border-radius: 4px;
+    background: #f9f9f9;
+    padding: 6px 12px;
+    margin-bottom: 6px;
 }
 </style>
 <?php
