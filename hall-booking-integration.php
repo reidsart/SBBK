@@ -665,7 +665,7 @@ class HallBookingIntegration {
                 'Rate per day up to 24h00' => 2200.00,
                 'Rate per hour: for 1st hour' => 220.00,
                 'Rate per hour: after 1st hour' => 110.00,
-                'Meeting room : per hour' => 110.00, // moved
+                'Meeting room : per hour' => 110.00,
                 'Refundable deposit at time of booking' => 2000.00,
             ],
             'SPOTLIGHTS & SOUND' => [
@@ -690,7 +690,7 @@ class HallBookingIntegration {
                 'Butter disk (fat)' => 1.00,
                 'Salt & pepper set' => 3.50,
                 'Plater, large glass' => 18.00,
-                'Refundable deposit for crockery, cutlery etc' => 500.00,
+                'Refundable deposit for crockery, cutlery & glassware' => 500.00,
             ],
             'CUTLERY (each)' => [
                 'Table knife' => 1.00,
@@ -721,47 +721,76 @@ class HallBookingIntegration {
                 'Serviettes white' => 10.00,
             ],
             'CORKAGE FEES WHEN CLIENT SUPPLIES THEIR OWN' => [
-                'Per 750ml botle' => 30.00,
+                'Per 750ml bottle' => 30.00,
             ],
         ];
         $tariffs = get_option('hall_tariffs', $default_tariffs);
 
-        if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['tariffs'])) {
-            $new_tariffs = [];
-            foreach ($_POST['tariffs'] as $category => $items) {
-                foreach ($items as $label => $value) {
-                    $new_tariffs[$category][$label] = floatval($value);
-                }
-            }
-            update_option('hall_tariffs', $new_tariffs);
-            $tariffs = $new_tariffs;
-            echo '<div class="notice notice-success"><p>Tariffs updated successfully!</p></div>';
+   // Handle add action (only)
+    if (
+        $_SERVER['REQUEST_METHOD'] === 'POST' &&
+        isset($_POST['add_tariff_category']) &&
+        !empty($_POST['add_tariff_label']) &&
+        isset($_POST['add_tariff_value'])
+    ) {
+        $category = $_POST['add_tariff_category'];
+        $label = trim($_POST['add_tariff_label']);
+        $value = floatval($_POST['add_tariff_value']);
+        if ($label !== '') {
+            $tariffs[$category][$label] = $value;
+            update_option('hall_tariffs', $tariffs);
+            echo '<div class="notice notice-success"><p>Tariff added successfully!</p></div>';
+            echo '<script>window.location = window.location.href;</script>';
+            return;
         }
-        ?>
-        <div class="wrap">
-            <h1>Sandbaai Hall Tariff Management (2025)</h1>
-            <form method="post">
-                <?php wp_nonce_field('hall_save_tariffs', 'hall_save_tariffs_nonce');
-                foreach ($tariffs as $category => $items): ?>
-                    <h2 style="margin-top:2em;"><?php echo esc_html($category); ?></h2>
-                    <table class="form-table">
-                    <?php foreach ($items as $label => $value): ?>
-                        <tr>
-                            <th scope="row"><?php echo esc_html($label); ?></th>
-                            <td>
+    }
+    // Handle update (existing code)
+    elseif ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['tariffs'])) {
+        $new_tariffs = [];
+        foreach ($_POST['tariffs'] as $category => $items) {
+            foreach ($items as $label => $value) {
+                $new_tariffs[$category][$label] = floatval($value);
+            }
+        }
+        update_option('hall_tariffs', $new_tariffs);
+        $tariffs = $new_tariffs;
+        echo '<div class="notice notice-success"><p>Tariffs updated successfully!</p></div>';
+    }
+    ?>
+    <div class="wrap">
+        <h1>Sandbaai Hall Tariff Management (2025)</h1>
+        <form method="post" id="tariff-form">
+            <?php wp_nonce_field('hall_save_tariffs', 'hall_save_tariffs_nonce');
+            foreach ($tariffs as $category => $items): ?>
+                <h2 style="margin-top:2em;"><?php echo esc_html($category); ?></h2>
+                <table class="form-table">
+                <?php foreach ($items as $label => $value): ?>
+                    <tr>
+                        <th scope="row"><?php echo esc_html($label); ?></th>
+                        <td>
                             <input type="number" step="0.01" min="0" name="tariffs[<?php echo esc_attr($category); ?>][<?php echo esc_attr($label); ?>]" value="<?php echo esc_attr($value); ?>" />
                             <span style="margin-left:10px;font-weight:bold;">R <?php echo number_format((float)$value, 2); ?></span>
-                            </td>
-                        </tr>
-                    <?php endforeach; ?>
-                    </table>
+                        </td>
+                    </tr>
                 <?php endforeach; ?>
-                <input type="submit" value="Save Tariffs" class="button button-primary"/>
-            </form>
-        </div>
-        <?php
-    }
-
+                <!-- Add new tariff row -->
+                <tr style="background:#f6f6f6;">
+                    <th scope="row">
+                        <input type="text" name="add_tariff_label" placeholder="New tariff label..." style="width:90%;" />
+                    </th>
+                    <td>
+                        <input type="number" step="0.01" min="0" name="add_tariff_value" placeholder="0.00" style="width:90px;" />
+                        <input type="hidden" name="add_tariff_category" value="<?php echo esc_attr($category); ?>" />
+                        <button type="submit" class="button button-primary button-small" style="margin-left:10px;">Add</button>
+                    </td>
+                </tr>
+                </table>
+            <?php endforeach; ?>
+            <input type="submit" value="Save Tariffs" class="button button-primary"/>
+        </form>
+    </div>
+    <?php
+}
     public function save_tariffs() {
         if (!current_user_can('manage_options')) wp_die('No permissions');
         if (
