@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Hall Booking Integration
  * Description: Automates Sandbaai Hall bookings via Contact Form 7 and Events Manager, with invoice generation and tariff management.
- * Version: 2.3
+ * Version: 2.4
  * Author: Christopher Reid, Copilot
  */
 
@@ -23,6 +23,69 @@ class HallBookingIntegration {
         add_shortcode('sandbaai_hall_tariffs', array($this, 'display_tariffs_shortcode'));
         add_shortcode('sandbaai_hall_quote_form', array($this, 'quote_form_shortcode'));
         $this->setup_ajax();
+
+        // Deposit for crockery/cutlery and form JS logic
+        add_action('wp_footer', array($this, 'inject_booking_js'));
+        add_action('admin_footer', array($this, 'inject_admin_booking_js'));
+    }
+
+    /**
+     * JS for frontend: Crockery/cutlery deposit auto-calculation and non-editable, and CF7 redirect
+     */
+    public function inject_booking_js() {
+        if (!is_admin()) {
+            ?>
+            <script>
+            // Crockery/Cutlery deposit logic for booking/quote forms (frontend)
+            document.addEventListener('DOMContentLoaded', function() {
+                // For CF7: Crockery/Cutlery form logic (field IDs/names must match your form)
+                var crockery = document.querySelectorAll('.crockery-item, input[name^="crockery["], input[name="crockery[]"]');
+                var cutlery = document.querySelectorAll('.cutlery-item, input[name^="cutlery["], input[name="cutlery[]"]');
+                var deposit = document.getElementById('crockery_deposit') || document.querySelector('input[name="crockery_deposit"]');
+                function updateCrockeryDeposit() {
+                    var hasCrockery = false, hasCutlery = false;
+                    crockery.forEach(function(i){ if(i.checked) hasCrockery = true; });
+                    cutlery.forEach(function(i){ if(i.checked) hasCutlery = true; });
+                    if (deposit) {
+                        deposit.value = (hasCrockery || hasCutlery) ? 1 : 0;
+                        deposit.setAttribute('readonly', 'readonly');
+                        deposit.readOnly = true;
+                    }
+                }
+                if(deposit) updateCrockeryDeposit();
+                crockery.forEach(function(i){ i.addEventListener('change', updateCrockeryDeposit); });
+                cutlery.forEach(function(i){ i.addEventListener('change', updateCrockeryDeposit); });
+            });
+            // CF7 Redirect to thank you page after submit
+            document.addEventListener('wpcf7mailsent', function(event) {
+                window.location.href = '/thank-you/';
+            }, false);
+            </script>
+            <?php
+        }
+    }
+    /**
+     * JS for admin: Make deposit fields non-editable, auto-update crockery/cutlery deposit in admin quote metabox
+     */
+    public function inject_admin_booking_js() {
+        $screen = get_current_screen();
+        if ($screen && ($screen->post_type == 'hall_quote' || $screen->post_type == 'hall_invoice') && $screen->base == 'post') {
+            ?>
+            <script>
+            (function($){
+                function updateCrockeryDepositAdmin() {
+                    var crockeryChecked = $("input[name='crockery[]']:checked").length > 0;
+                    var cutleryChecked = $("input[name='cutlery[]']:checked").length > 0;
+                    var deposit = (crockeryChecked || cutleryChecked) ? 1 : 0;
+                    $("input[name='crockery_deposit']").val(deposit);
+                }
+                $("input[name='crockery[]'], input[name='cutlery[]']").on('change', updateCrockeryDepositAdmin);
+                updateCrockeryDepositAdmin();
+                $("input[name='crockery_deposit'], input[name='booking_deposit']").attr('readonly', 'readonly');
+            })(jQuery);
+            </script>
+            <?php
+        }
     }
 
     /**
@@ -188,6 +251,26 @@ class HallBookingIntegration {
                 'quantity' => 1,
                 'price' => $deposit_price,
                 'subtotal' => $deposit_price,
+            ];
+            $total += $deposit_price;
+        }
+
+        // Crockery/cutlery deposit logic: if any item in CROCKERY or CUTLERY is selected, add the deposit (if not already)
+        if (
+            (
+                (!empty($selected['CROCKERY (each)']) && is_array($selected['CROCKERY (each)']) && count($selected['CROCKERY (each)']) > 0) ||
+                (!empty($selected['CUTLERY (each)']) && is_array($selected['CUTLERY (each)']) && count($selected['CUTLERY (each)']) > 0)
+            )
+            && isset($tariffs['CROCKERY (each)']['Refundable deposit for crockery, cutlery etc'])
+            && !$this->item_exists($items, 'CROCKERY (each)', 'Refundable deposit for crockery, cutlery etc')
+        ) {
+            $deposit_price = floatval($tariffs['CROCKERY (each)']['Refundable deposit for crockery, cutlery etc']);
+            $items[] = [
+                'category' => 'CROCKERY (each)',
+                'label' => 'Refundable deposit for crockery, cutlery etc',
+                'quantity' => 1,
+                'price' => $deposit_price,
+                'subtotal' => $deposit_price
             ];
             $total += $deposit_price;
         }
