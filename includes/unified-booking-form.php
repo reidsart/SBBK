@@ -6,7 +6,7 @@ add_shortcode('unified_hall_booking_form', function() {
     $main_hall_day_label = "Main Hall Rate per day (up to 24h00)";
     $main_hall_deposit_label = "Main Hall refundable deposit";
     $main_hall_hour_first_label = "Rate per hour: for 1st hour";
-    $main_hall_hour_after_label = "Rate per hour: after first hour";
+    $main_hall_hour_after_label = "Rate per hour: after 1st hour";
     $crockery_deposit_label = "Refundable deposit for crockery, cutlery, & glassware";
     $wifi_label = "Wi Fi";
 
@@ -260,7 +260,7 @@ function autofillHallHireRates() {
     var days = startDate && endDate ? getDaysBetween(startDate, endDate) : 1;
     var mainHallDayRateLabel = "Main Hall Rate per day (up to 24h00)";
     var mainHallHourFirstLabel = "Rate per hour: for 1st hour";
-    var mainHallHourAfterLabel = "Rate per hour: after first hour – per hour";
+    var mainHallHourAfterLabel = "Rate per hour: after 1st hour";
     // Reset all Hall Hire checkboxes/qty
     document.querySelectorAll('.tariff-row[data-category="Hall Hire Rates"]').forEach(function(row){
         var label = row.getAttribute('data-label');
