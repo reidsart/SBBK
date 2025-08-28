@@ -102,11 +102,14 @@ add_shortcode('unified_hall_booking_form', function() {
             if ($label === $main_hall_deposit_label) { $deposit_row = ['category'=>$category, 'label'=>$label, 'price'=>$price]; continue; }
             if ($label === $crockery_deposit_label) { $crockery_row = ['category'=>$category, 'label'=>$label, 'price'=>$price]; continue; }
             $is_wifi = ($label === $wifi_label);
-            $is_spotlight_sound = ($category === "Spotlights & Sound");
-            $is_kitchen = ($category === "Kitchen Hire");
+            $is_spotlight_sound = (strtolower($category) == "spotlights & sound");
+            $is_kitchen = (strtolower($category) == "kitchen hire");
             $is_hall_day = ($label === $main_hall_day_label);
             $is_hall_hour_first = ($label === $main_hall_hour_first_label);
             $is_hall_hour_after = ($label === $main_hall_hour_after_label);
+            $is_crockery = (strtolower($category) == "crockery (each)");
+            $is_cutlery = (strtolower($category) == "cutlery (each)");
+            $is_glassware = (strtolower($category) == "glassware (each)");
             $qty_readonly = ($is_wifi || $is_spotlight_sound || $is_kitchen || $is_hall_day || $is_hall_hour_first || $is_hall_hour_after);
         ?>
             <tr class="tariff-row"
@@ -130,14 +133,20 @@ add_shortcode('unified_hall_booking_form', function() {
                     </label>
                 </td>
                 <td>
-                    <input type="number"
-                        name="quantity[<?php echo esc_attr($category); ?>][<?php echo esc_attr($label); ?>]"
-                        value="0" min="0" max="999"
-                        style="width:80px; text-align:center;"
-                        readonly
-                        class="tariff-qty"
-                        data-readonly="<?php echo $qty_readonly ? '1' : '0'; ?>"
-                    >
+                    <?php if ($is_spotlight_sound || $is_kitchen): ?>
+                        <span class="static-qty-display">0</span>
+                    <?php else: ?>
+                        <input type="number"
+                            name="quantity[<?php echo esc_attr($category); ?>][<?php echo esc_attr($label); ?>]"
+                            value="0" min="0" max="999"
+                            style="width:80px; text-align:center;"
+                            <?php echo $qty_readonly ? 'readonly' : ''; ?>
+                            class="tariff-qty <?php
+                                echo $is_crockery || $is_cutlery || $is_glassware ? 'crockery-qty' : '';
+                            ?>"
+                            data-readonly="<?php echo $qty_readonly ? '1' : '0'; ?>"
+                        >
+                    <?php endif; ?>
                 </td>
                 <td>R <?php echo number_format((float)$price,2); ?></td>
             </tr>
@@ -185,61 +194,90 @@ function getDaysBetween(startDateStr, endDateStr) {
 document.getElementById('event_time').addEventListener('change', function(){
     document.getElementById('custom-hours').style.display = (this.value === 'Custom') ? 'flex' : 'none';
     autofillHallHireRates();
-    updateTotal();
+    updateAll();
 });
 document.getElementById('space').addEventListener('change', function(){
     autofillHallHireRates();
-    updateDeposits();
-    updateTotal();
+    updateAll();
 });
 document.getElementById('event_start_date').addEventListener('change', function(){
     autofillHallHireRates();
-    updateTotal();
+    updateAll();
 });
 document.getElementById('event_end_date').addEventListener('change', function(){
     autofillHallHireRates();
-    updateTotal();
+    updateAll();
 });
 document.getElementById('custom_start').addEventListener('change', function(){
     autofillHallHireRates();
-    updateTotal();
+    updateAll();
 });
 document.getElementById('custom_end').addEventListener('change', function(){
     autofillHallHireRates();
-    updateTotal();
+    updateAll();
 });
-// Checkbox qty logic
 document.querySelectorAll('.tariff-item').forEach(function(el){
     el.addEventListener('change', function(){
-        var qtyInput = el.closest('tr').querySelector('.tariff-qty');
-        if(qtyInput) {
-            qtyInput.value = el.checked ? "1" : "0";
+        var row = el.closest('tr');
+        var qtyInput = row.querySelector('.tariff-qty');
+        var staticQty = row.querySelector('.static-qty-display');
+        var isCrockery = qtyInput && qtyInput.classList.contains('crockery-qty');
+        var isStatic = !!staticQty;
+        // If it's a static qty (spotlights, kitchen), show 1/0 and do not allow edit
+        if(isStatic) {
+            staticQty.textContent = el.checked ? "1" : "0";
         }
-        updateDeposits();
-        updateTotal();
+        // For normal items, set to 1 if checked, 0 if not (and enable/disable)
+        else if(qtyInput && !qtyInput.hasAttribute('readonly')) {
+            qtyInput.value = el.checked ? "1" : "0";
+            qtyInput.disabled = !el.checked;
+        }
+        // For crockery/cutlery/glassware, set to 1 if checked, 0 if not, but allow user to manually edit above 1 if desired
+        else if(isCrockery) {
+            if(el.checked && (!qtyInput.value || qtyInput.value == "0")) qtyInput.value = "1";
+            qtyInput.disabled = !el.checked;
+            if(!el.checked) qtyInput.value = "0";
+        }
+        updateAll();
     });
 });
+document.querySelectorAll('.crockery-qty').forEach(function(inp){
+    inp.addEventListener('input', function() {
+        updateAll();
+    });
+});
+
+// --- Deposit logic ---
 function updateDeposits() {
     var space = document.getElementById('space').value;
     var mainHallDeposit = document.getElementById('deposit-qty');
     if(mainHallDeposit) mainHallDeposit.value = (space == "Main Hall" || space == "Both Spaces") ? 1 : 0;
+
+    // Crockery/cutlery/glassware deposit
     var crockeryChecked = false;
     document.querySelectorAll('.tariff-item').forEach(function(el){
-        var cat = el.getAttribute('data-category');
-        if((cat === "Crockery" || cat === "Glassware" || cat === "Cutlery") && el.checked) crockeryChecked = true;
+        var cat = (el.getAttribute('data-category') || '').toLowerCase();
+        if((cat === "crockery (each)" || cat === "glassware (each)" || cat === "cutlery (each)") && el.checked) crockeryChecked = true;
+    });
+    document.querySelectorAll('.crockery-qty').forEach(function(inp){
+        if (parseInt(inp.value, 10) > 0) crockeryChecked = true;
     });
     var crockeryDeposit = document.getElementById('crockery-qty');
     if(crockeryDeposit) crockeryDeposit.value = crockeryChecked ? 1 : 0;
 }
+
+// --- Total calculation ---
 function updateTotal() {
     var total = 0;
-    document.querySelectorAll('.tariff-item').forEach(function(el){
-        var qtyInput = el.closest('tr').querySelector('.tariff-qty');
-        if(el.checked && qtyInput) {
-            var qty = parseInt(qtyInput.value) || 0;
-            var price = parseFloat(el.getAttribute('data-price')) || 0;
-            total += qty * price;
-        }
+    document.querySelectorAll('.tariff-row').forEach(function(row){
+        var cb = row.querySelector('.tariff-item');
+        var price = parseFloat(cb.getAttribute('data-price')) || 0;
+        var staticQty = row.querySelector('.static-qty-display');
+        var qtyInput = row.querySelector('.tariff-qty');
+        var qty = 0;
+        if(staticQty && cb.checked) qty = 1;
+        else if(qtyInput && !qtyInput.disabled) qty = parseInt(qtyInput.value) || 0;
+        total += price * qty;
     });
     var depositQty = document.getElementById('deposit-qty');
     var depositVal = depositQty ? parseInt(depositQty.value) : 0;
@@ -251,7 +289,21 @@ function updateTotal() {
     total += crockeryVal * crockeryPrice;
     document.getElementById('quote-total').textContent = 'R ' + total.toFixed(2);
 }
-// Hall Hire Rates autofill logic, including multi-day
+
+// --- Enable/disable qty inputs for normal items (not static, not deposit) ---
+document.querySelectorAll('.tariff-qty').forEach(function(inp){
+    var row = inp.closest('tr');
+    var cb = row.querySelector('.tariff-item');
+    var staticQty = row.querySelector('.static-qty-display');
+    if (!cb || staticQty) return;
+    inp.disabled = !cb.checked;
+    cb.addEventListener('change', function(){
+        inp.disabled = !cb.checked;
+        if (!cb.checked) inp.value = 0;
+    });
+});
+
+// --- Autofill logic (no changes from your original for hall hire) ---
 function autofillHallHireRates() {
     var space = document.getElementById('space').value;
     var time = document.getElementById('event_time').value;
@@ -267,7 +319,7 @@ function autofillHallHireRates() {
         var checkbox = row.querySelector('.tariff-item');
         var qtyInput = row.querySelector('.tariff-qty');
         checkbox.checked = false;
-        qtyInput.value = "0";
+        if(qtyInput) qtyInput.value = "0";
     });
     if(space == "Main Hall" || space == "Both Spaces") {
         if(time === "Full Day") {
@@ -275,7 +327,7 @@ function autofillHallHireRates() {
                 var checkbox = row.querySelector('.tariff-item');
                 var qtyInput = row.querySelector('.tariff-qty');
                 checkbox.checked = true;
-                qtyInput.value = days.toString();
+                if(qtyInput) qtyInput.value = days.toString();
             });
         } else if(time === "Morning" || time === "Afternoon" || time === "Evening") {
             var duration = 0;
@@ -288,14 +340,14 @@ function autofillHallHireRates() {
                 var checkbox = row.querySelector('.tariff-item');
                 var qtyInput = row.querySelector('.tariff-qty');
                 checkbox.checked = true;
-                qtyInput.value = totalFirstHour.toString();
+                if(qtyInput) qtyInput.value = totalFirstHour.toString();
             });
             if(totalAfterHour > 0) {
                 document.querySelectorAll('.tariff-row[data-label="' + mainHallHourAfterLabel + '"]').forEach(function(row){
                     var checkbox = row.querySelector('.tariff-item');
                     var qtyInput = row.querySelector('.tariff-qty');
                     checkbox.checked = true;
-                    qtyInput.value = totalAfterHour.toString();
+                    if(qtyInput) qtyInput.value = totalAfterHour.toString();
                 });
             }
         } else if(time === "Custom") {
@@ -313,25 +365,26 @@ function autofillHallHireRates() {
                 var checkbox = row.querySelector('.tariff-item');
                 var qtyInput = row.querySelector('.tariff-qty');
                 checkbox.checked = true;
-                qtyInput.value = totalFirstHour.toString();
+                if(qtyInput) qtyInput.value = totalFirstHour.toString();
             });
             if(totalAfterHour > 0) {
                 document.querySelectorAll('.tariff-row[data-label="' + mainHallHourAfterLabel + '"]').forEach(function(row){
                     var checkbox = row.querySelector('.tariff-item');
                     var qtyInput = row.querySelector('.tariff-qty');
                     checkbox.checked = true;
-                    qtyInput.value = totalAfterHour.toString();
+                    if(qtyInput) qtyInput.value = totalAfterHour.toString();
                 });
             }
         }
     }
+}
+// --- Call all update functions together
+function updateAll() {
     updateDeposits();
     updateTotal();
 }
-// Initial fill
 autofillHallHireRates();
-updateDeposits();
-updateTotal();
+updateAll();
 </script>
 <style>
 #hall-booking-quote-form select,
