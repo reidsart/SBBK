@@ -829,6 +829,7 @@ class HallBookingIntegration {
         <div class="wrap">
             <h1>Hall Booking Integration Settings</h1>
             <form method="post">
+        <?php wp_nonce_field('hall_save_tariffs', 'hall_save_tariffs_nonce'); ?>
                 <table class="form-table">
                     <tr>
                         <th scope="row">Booking Form</th>
@@ -1030,6 +1031,12 @@ class HallBookingIntegration {
 
     public function save_tariffs() {
         if (!current_user_can('manage_options')) wp_die('No permissions');
+        if (
+    !isset($_POST['hall_save_tariffs_nonce']) ||
+    !wp_verify_nonce($_POST['hall_save_tariffs_nonce'], 'hall_save_tariffs')
+) {
+    wp_die('Nonce failure!');
+}
         $tariffs = $_POST['tariffs'] ?? [];
         $cleaned = [];
         foreach ($tariffs as $key => $value) $cleaned[$key] = intval($value);
