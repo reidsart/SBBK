@@ -14,7 +14,6 @@ require_once __DIR__ . '/includes/unified-booking-form-handler.php';
 class HallBookingIntegration {
     public function __construct() {
 
-        add_action('wpcf7_mail_sent', array($this, 'handle_booking_submission'));
         add_action('admin_menu', array($this, 'add_admin_menu'));
         add_action('add_meta_boxes', array($this, 'add_approval_metabox'));
         add_action('save_post', array($this, 'handle_event_approval'), 10, 3);
@@ -25,121 +24,6 @@ class HallBookingIntegration {
         add_action('admin_init', array($this, 'maybe_send_invoice'));
         add_shortcode('sandbaai_hall_tariffs', array($this, 'display_tariffs_shortcode'));
         $this->setup_ajax();
-    }
-
-    /**
-     * Handle Contact Form 7 booking submission: create event + invoice, notify admin.
-     */
-    public function handle_booking_submission($contact_form) {
-        $booking_form_id = get_option('hall_booking_form_id', 0);
-        if ($contact_form->id() != $booking_form_id) return;
-
-        $submission = WPCF7_Submission::get_instance();
-        if (!$submission) return;
-
-        $posted_data = $submission->get_posted_data();
-
-        // Extract and sanitize
-        $contact_person = sanitize_text_field($this->get_first($posted_data['contact-person'] ?? ''));
-        $organization   = sanitize_text_field($this->get_first($posted_data['organization'] ?? ''));
-        $email          = sanitize_email($this->get_first($posted_data['your-email'] ?? ''));
-        $phone          = sanitize_text_field($this->get_first($posted_data['phone'] ?? ''));
-        $space_raw      = $this->get_first($posted_data['space'] ?? '');
-        $space_cleaned  = $this->clean_space_name($space_raw);
-        $space          = sanitize_text_field($space_cleaned);
-        $event_date     = sanitize_text_field($this->get_first($posted_data['event-date'] ?? ''));
-        $event_time_raw = $this->get_first($posted_data['event-time'] ?? '');
-        $event_time     = sanitize_text_field($event_time_raw);
-
-        // Custom hours now separated into start/end time
-        $custom_start   = sanitize_text_field($this->get_first($posted_data['custom-start-time'] ?? ''));
-        $custom_end     = sanitize_text_field($this->get_first($posted_data['custom-end-time'] ?? ''));
-        $guest_count    = intval($this->get_first($posted_data['guest-count'] ?? 0));
-        $event_title    = sanitize_text_field($this->get_first($posted_data['event-title'] ?? ''));
-        $description    = sanitize_textarea_field($this->get_first($posted_data['event-description'] ?? ''));
-        $setup_requirements = $this->format_array_field($posted_data['setup'] ?? []);
-        $other_setup    = sanitize_text_field($this->get_first($posted_data['other-setup'] ?? ''));
-        $catering_raw   = $this->get_first($posted_data['catering'] ?? '');
-        $catering       = sanitize_text_field($catering_raw);
-        $event_privacy_raw = strtolower($this->get_first($posted_data['event-privacy'] ?? 'private'));
-        $is_private     = ($event_privacy_raw === 'private');
-
-        // Store original title, do not rename for privacy
-        $pending_title  = "PENDING: " . ($event_title ?: 'Event');
-        $public_description = $description ?: 'Private event at Sandbaai Hall';
-
-        // Admin notes - stored as meta only, not in post_content
-        $admin_notes = $this->build_admin_notes([
-            'contact_person' => $contact_person,
-            'organization' => $organization,
-            'email' => $email,
-            'phone' => $phone,
-            'space' => $space,
-            'guest_count' => $guest_count,
-            'event_time' => $event_time,
-            'custom_start' => $custom_start,
-            'custom_end' => $custom_end,
-            'setup_requirements' => $setup_requirements,
-            'other_setup' => $other_setup,
-            'catering' => $catering
-        ]);
-
-        $location_id = $this->get_location_id($space);
-
-        // Parse times (handles custom start/end)
-        $times = $this->parse_event_times($event_time, $custom_start, $custom_end);
-
-        // Create event post for Events Manager (**post_content is now the user description**)
-        $event_id = wp_insert_post([
-            'post_title'     => $pending_title,
-            'post_content'   => $public_description,
-            'post_excerpt'   => $public_description,
-            'post_status'    => 'draft',
-            'post_type'      => 'event',
-            'post_author'    => 1,
-            'comment_status' => 'closed'
-        ]);
-
-        if ($event_id) {
-            // Meta for Events Manager
-            update_post_meta($event_id, '_event_start_date', date('Y-m-d', strtotime($event_date)));
-            update_post_meta($event_id, '_event_end_date', date('Y-m-d', strtotime($event_date)));
-            update_post_meta($event_id, '_event_start_time', $times['start']);
-            update_post_meta($event_id, '_event_end_time', $times['end']);
-            update_post_meta($event_id, '_event_timezone', 'Africa/Johannesburg');
-            update_post_meta($event_id, '_location_id', $location_id);
-            update_post_meta($event_id, '_event_rsvp', 0);
-
-            // Set location (robust for EM)
-            if (class_exists('EM_Event')) {
-                $em_event = new EM_Event($event_id);
-                if ($location_id && get_post_status($location_id) == 'publish') {
-                    $em_event->location_id = $location_id;
-                    $em_event->location = new EM_Location($location_id);
-                    $em_event->save();
-                }
-            }
-
-            // Booking meta
-            update_post_meta($event_id, '_booking_contact_person', $contact_person);
-            update_post_meta($event_id, '_booking_email', $email);
-            update_post_meta($event_id, '_booking_phone', $phone);
-            update_post_meta($event_id, '_booking_space', $space);
-            update_post_meta($event_id, '_booking_guests', $guest_count);
-            update_post_meta($event_id, '_booking_status', 'pending_payment');
-            update_post_meta($event_id, '_booking_event_title', $event_title);
-            update_post_meta($event_id, '_booking_is_private', $is_private ? 1 : 0);
-            update_post_meta($event_id, '_booking_event_description', $description);
-            update_post_meta($event_id, '_booking_admin_notes', $admin_notes);
-            update_post_meta($event_id, '_booking_custom_start', $custom_start);
-            update_post_meta($event_id, '_booking_custom_end', $custom_end);
-
-            // Create initial invoice
-            $invoice_id = $this->create_invoice_for_booking($event_id, $contact_person, $email, $space, $event_date, $event_time, $guest_count);
-
-            // Notify booking admin
-            $this->send_admin_notification($event_id, $contact_person, $space, $event_date, $event_title, $invoice_id);
-        }
     }
 
     /////////////////////
@@ -748,6 +632,14 @@ class HallBookingIntegration {
             } else {
                 wp_set_post_tags($post_id, '', false);
             }
+             $email = get_post_meta($post_id, '_booking_email', true);
+   //Send email confirmaion to user
+    $contact_person = get_post_meta($post_id, '_booking_contact_person', true);
+    if ($email) {
+        $subject = "Your Sandbaai Hall Booking is Confirmed!";
+        $message = "Dear $contact_person,\n\nYour booking has been approved and is now live on our calendar.\n\nThank you!";
+        wp_mail($email, $subject, $message);
+    }
         }
     }
 
