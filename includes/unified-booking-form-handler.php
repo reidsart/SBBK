@@ -13,14 +13,18 @@ function hall_booking_quote_submit() {
     $email = sanitize_email($_POST['email'] ?? '');
     $phone = sanitize_text_field($_POST['phone'] ?? '');
     $space = sanitize_text_field($_POST['space'] ?? '');
-    $event_date = sanitize_text_field($_POST['event_date'] ?? '');
-    $event_time = sanitize_text_field($_POST['event_time'] ?? '');
-    $custom_start = sanitize_text_field($_POST['custom_start'] ?? '');
-    $custom_end = sanitize_text_field($_POST['custom_end'] ?? '');
-    $guest_count = intval($_POST['guest_count'] ?? 0);
     $event_title = sanitize_text_field($_POST['event_title'] ?? '');
     $event_description = sanitize_textarea_field($_POST['event_description'] ?? '');
     $event_privacy = strtolower(sanitize_text_field($_POST['event_privacy'] ?? 'private'));
+    $guest_count = intval($_POST['guest_count'] ?? 0);
+
+    // Dates
+    $event_start_date = sanitize_text_field($_POST['event_start_date'] ?? '');
+    $event_end_date = sanitize_text_field($_POST['event_end_date'] ?? '');
+
+    $event_time = sanitize_text_field($_POST['event_time'] ?? '');
+    $custom_start = sanitize_text_field($_POST['custom_start'] ?? '');
+    $custom_end = sanitize_text_field($_POST['custom_end'] ?? '');
     $setup_requirements = isset($_POST['setup']) ? implode(', ', array_map('sanitize_text_field', $_POST['setup'])) : '';
     $other_setup = sanitize_text_field($_POST['other_setup'] ?? '');
     $catering = sanitize_text_field($_POST['catering'] ?? '');
@@ -61,8 +65,8 @@ function hall_booking_quote_submit() {
         'comment_status' => 'closed'
     ]);
     if ($event_id) {
-        update_post_meta($event_id, '_event_start_date', date('Y-m-d', strtotime($event_date)));
-        update_post_meta($event_id, '_event_end_date', date('Y-m-d', strtotime($event_date)));
+        update_post_meta($event_id, '_event_start_date', date('Y-m-d', strtotime($event_start_date)));
+        update_post_meta($event_id, '_event_end_date', date('Y-m-d', strtotime($event_end_date)));
         update_post_meta($event_id, '_event_start_time', $custom_start ?: '08:00:00');
         update_post_meta($event_id, '_event_end_time', $custom_end ?: '17:00:00');
         update_post_meta($event_id, '_event_timezone', 'Africa/Johannesburg');
@@ -88,10 +92,10 @@ function hall_booking_quote_submit() {
 
     // 4. Create draft invoice post
     $invoice_id = wp_insert_post([
-        'post_title'   => "Invoice for {$space} booking on {$event_date}",
+        'post_title'   => "Invoice for {$space} booking from {$event_start_date} to {$event_end_date}",
         'post_type'    => 'hall_invoice',
         'post_status'  => 'draft',
-        'post_content' => "Booking for {$space} ({$event_time}) on {$event_date}. Guests: {$guest_count}.",
+        'post_content' => "Booking for {$space} ({$event_time}) from {$event_start_date} to {$event_end_date}. Guests: {$guest_count}.",
         'post_author'  => 1,
     ]);
     if ($invoice_id) {
@@ -109,7 +113,7 @@ function hall_booking_quote_submit() {
     $admin_email = get_option('admin_email');
     $subject = "🏢 New Hall Booking: {$contact_person} - {$space}";
     $message = "A new booking request has been received and created as a draft event.\n\n";
-    $message .= "Contact: {$contact_person}\nEmail: {$email}\nPhone: {$phone}\nSpace: {$space}\nDate: {$event_date}\nGuests: {$guest_count}\nEvent: {$event_title}\n\nQuote:\n";
+    $message .= "Contact: {$contact_person}\nEmail: {$email}\nPhone: {$phone}\nSpace: {$space}\nDate: {$event_start_date} to {$event_end_date}\nGuests: {$guest_count}\nEvent: {$event_title}\n\nQuote:\n";
     foreach ($items as $item) {
         $message .= "{$item['category']} - {$item['label']} x{$item['quantity']}: R " . number_format($item['subtotal'], 2) . "\n";
     }
@@ -123,7 +127,7 @@ function hall_booking_quote_submit() {
 
     // 6. Send confirmation email to user
     $user_subject = "Sandbaai Hall Booking Request Received";
-    $user_message = "Dear {$contact_person},\n\nThank you for your booking request.\n\nBooking Summary:\nSpace: {$space}\nDate: {$event_date}\nTime: {$event_time}\nGuests: {$guest_count}\nEvent: {$event_title}\n\nQuote:\n";
+    $user_message = "Dear {$contact_person},\n\nThank you for your booking request.\n\nBooking Summary:\nSpace: {$space}\nDate: {$event_start_date} to {$event_end_date}\nTime: {$event_time}\nGuests: {$guest_count}\nEvent: {$event_title}\n\nQuote:\n";
     foreach ($items as $item) {
         $user_message .= "{$item['category']} - {$item['label']} x{$item['quantity']}: R " . number_format($item['subtotal'], 2) . "\n";
     }
@@ -137,3 +141,5 @@ function hall_booking_quote_submit() {
     wp_redirect('/thank-you/');
     exit;
 }
+
+// No closing PHP tag needed for files containing only PHP.
