@@ -1,23 +1,25 @@
 <?php
 if (!defined('ABSPATH')) exit;
 
+// Unified Booking Form Handler for Sandbaai Hall
+
 add_action('admin_post_nopriv_hall_booking_quote_submit', 'hall_booking_quote_submit');
 add_action('admin_post_hall_booking_quote_submit', 'hall_booking_quote_submit');
 
 function hall_booking_quote_submit() {
     // 1. Validate/sanitize fields
-    $contact_person = sanitize_text_field($_POST['contact_person']);
-    $organization = sanitize_text_field($_POST['organization']);
-    $email = sanitize_email($_POST['email']);
-    $phone = sanitize_text_field($_POST['phone']);
-    $space = sanitize_text_field($_POST['space']);
-    $event_date = sanitize_text_field($_POST['event_date']);
-    $event_time = sanitize_text_field($_POST['event_time']);
+    $contact_person = sanitize_text_field($_POST['contact_person'] ?? '');
+    $organization = sanitize_text_field($_POST['organization'] ?? '');
+    $email = sanitize_email($_POST['email'] ?? '');
+    $phone = sanitize_text_field($_POST['phone'] ?? '');
+    $space = sanitize_text_field($_POST['space'] ?? '');
+    $event_date = sanitize_text_field($_POST['event_date'] ?? '');
+    $event_time = sanitize_text_field($_POST['event_time'] ?? '');
     $custom_start = sanitize_text_field($_POST['custom_start'] ?? '');
     $custom_end = sanitize_text_field($_POST['custom_end'] ?? '');
-    $guest_count = intval($_POST['guest_count']);
-    $event_title = sanitize_text_field($_POST['event_title']);
-    $event_description = sanitize_textarea_field($_POST['event_description']);
+    $guest_count = intval($_POST['guest_count'] ?? 0);
+    $event_title = sanitize_text_field($_POST['event_title'] ?? '');
+    $event_description = sanitize_textarea_field($_POST['event_description'] ?? '');
     $event_privacy = strtolower(sanitize_text_field($_POST['event_privacy'] ?? 'private'));
     $setup_requirements = isset($_POST['setup']) ? implode(', ', array_map('sanitize_text_field', $_POST['setup'])) : '';
     $other_setup = sanitize_text_field($_POST['other_setup'] ?? '');
@@ -46,7 +48,7 @@ function hall_booking_quote_submit() {
         }
     }
 
-    // 3. Create draft event (as in your original code)
+    // 3. Create draft event
     $pending_title = "PENDING: " . ($event_title ?: 'Event');
     $public_description = $event_description ?: 'Private event at Sandbaai Hall';
     $event_id = wp_insert_post([
@@ -80,9 +82,11 @@ function hall_booking_quote_submit() {
         update_post_meta($event_id, '_booking_catering', $catering);
         update_post_meta($event_id, '_booking_quote_items', $items);
         update_post_meta($event_id, '_booking_quote_total', $total);
+    } else {
+        error_log("Sandbaai Hall: Failed to create draft event for booking!");
     }
 
-    // 4. Create invoice post (if needed)
+    // 4. Create draft invoice post
     $invoice_id = wp_insert_post([
         'post_title'   => "Invoice for {$space} booking on {$event_date}",
         'post_type'    => 'hall_invoice',
@@ -97,19 +101,27 @@ function hall_booking_quote_submit() {
         update_post_meta($invoice_id, '_invoice_items', $items);
         update_post_meta($invoice_id, '_invoice_total', $total);
         update_post_meta($invoice_id, '_invoice_status', 'pending');
+    } else {
+        error_log("Sandbaai Hall: Failed to create draft invoice for booking!");
     }
 
-    // 5. Send notification emails (admin + user)
+    // 5. Send notification email to booking admin
     $admin_email = get_option('admin_email');
     $subject = "🏢 New Hall Booking: {$contact_person} - {$space}";
-    $message = "A new booking request with quote:\n\nContact: {$contact_person}\nEmail: {$email}\nPhone: {$phone}\nSpace: {$space}\nDate: {$event_date}\nGuests: {$guest_count}\nEvent: {$event_title}\n\nQuote:\n";
+    $message = "A new booking request has been received and created as a draft event.\n\n";
+    $message .= "Contact: {$contact_person}\nEmail: {$email}\nPhone: {$phone}\nSpace: {$space}\nDate: {$event_date}\nGuests: {$guest_count}\nEvent: {$event_title}\n\nQuote:\n";
     foreach ($items as $item) {
         $message .= "{$item['category']} - {$item['label']} x{$item['quantity']}: R " . number_format($item['subtotal'], 2) . "\n";
     }
     $message .= "\nTotal: R " . number_format($total, 2);
-    wp_mail($admin_email, $subject, $message);
+    $message .= "\n\nReview and send the invoice via the admin dashboard.";
+    if ($admin_email) {
+        wp_mail($admin_email, $subject, $message);
+    } else {
+        error_log("Sandbaai Hall: Admin email not set in options.");
+    }
 
-    // User confirmation email
+    // 6. Send confirmation email to user
     $user_subject = "Sandbaai Hall Booking Request Received";
     $user_message = "Dear {$contact_person},\n\nThank you for your booking request.\n\nBooking Summary:\nSpace: {$space}\nDate: {$event_date}\nTime: {$event_time}\nGuests: {$guest_count}\nEvent: {$event_title}\n\nQuote:\n";
     foreach ($items as $item) {
@@ -117,9 +129,11 @@ function hall_booking_quote_submit() {
     }
     $user_message .= "\nTotal: R " . number_format($total, 2);
     $user_message .= "\n\nWe will review your request and send a formal invoice. Your booking is confirmed once payment is received.";
-    wp_mail($email, $user_subject, $user_message);
+    if ($email) {
+        wp_mail($email, $user_subject, $user_message);
+    }
 
-    // 6. Redirect to thank you page
+    // 7. Redirect to thank you page
     wp_redirect('/thank-you/');
     exit;
 }
