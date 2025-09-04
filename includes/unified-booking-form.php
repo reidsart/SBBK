@@ -26,10 +26,28 @@ add_shortcode('unified_hall_booking_form', function() {
     if ($main_hall_deposit_price === null) $main_hall_deposit_price = 2000;
     if ($crockery_deposit_price === null) $crockery_deposit_price = 500;
 
+    // ---- DEFINE LABELS TO FIX THE ERROR ----
+    $wifi_label = 'Wi Fi';
+    $main_hall_day_label = 'Rate per day up to 24h00';
+    $main_hall_hour_first_label = 'Rate per hour: for 1st hour';
+    $main_hall_hour_after_label = 'Rate per hour: after 1st hour';
+
     ob_start();
 ?>
 <form id="hall-booking-quote-form" method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>">
     <h3>Contact Information</h3>
+    <label for="contact_person">Your Name *</label>
+    <input type="text" name="contact_person" id="contact_person" required>
+
+    <label for="organization">Organization *</label>
+    <input type="text" name="organization" id="organization" required>
+
+    <label for="email">Your Email *</label>
+    <input type="email" name="email" id="email" required>
+    
+    <label for="phone">Phone Number *</label>
+    <input type="text" name="phone" id="phone" required>
+
     <div style="display:flex; gap:24px;">
         <div style="flex:2;">
             <label>Event Title*</label>
